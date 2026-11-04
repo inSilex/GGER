@@ -1,0 +1,10 @@
+/*
+ * The native title converter only accepts undefined dynamic symbols; the
+ * executable publishes no application exports.  Localize every symbol while
+ * keeping the undefined import list in .dynsym.
+ *
+ * SPDX-License-Identifier: MIT
+ */
+{
+    local: *;
+};

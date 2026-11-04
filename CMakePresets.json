@@ -1,0 +1,139 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "linux-x86_64",
+      "displayName": "GGER Linux x86-64 (release)",
+      "description": "Dynamically linked glibc ELF using SDL3 X11 (runtime-loaded) and static PulseAudio.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/linux-x86_64",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "NW_DEBUG_TOOLS": "OFF"
+      }
+    },
+    {
+      "name": "linux-x86_64-debug",
+      "displayName": "GGER Linux x86-64 (debug)",
+      "description": "Unoptimized build with developer diagnostics enabled.",
+      "inherits": "linux-x86_64",
+      "binaryDir": "${sourceDir}/build/linux-x86_64-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "NW_DEBUG_TOOLS": "ON"
+      }
+    },
+    {
+      "name": "windows-x64-mingw",
+      "displayName": "GGER Windows x86-64 (release)",
+      "description": "MinGW-w64 release build with SDL3 compiled from the vendored source.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/windows-x64-mingw",
+      "toolchainFile": "${sourceDir}/cmake/toolchain-windows-x64-mingw.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "NW_DEBUG_TOOLS": "OFF"
+      }
+    },
+    {
+      "name": "windows-x64-mingw-debug",
+      "displayName": "GGER Windows x86-64 (debug)",
+      "description": "MinGW-w64 debug build with developer diagnostics enabled.",
+      "inherits": "windows-x64-mingw",
+      "binaryDir": "${sourceDir}/build/windows-x64-mingw-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "NW_DEBUG_TOOLS": "ON"
+      }
+    },
+    {
+      "name": "android",
+      "displayName": "GGER Android APK (release)",
+      "description": "Signed release APK assembled by Gradle. Requires NW_ANDROID_KEYSTORE, NW_ANDROID_KEYSTORE_PASSWORD, NW_ANDROID_KEY_ALIAS, and NW_ANDROID_KEY_PASSWORD.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/android",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "NW_ANDROID_PACKAGE": "ON",
+        "NW_ANDROID_BUILD_TYPE": "Release",
+        "NW_ANDROID_ABIS": "arm64-v8a,x86_64",
+        "NW_ANDROID_RENDER_SCALE": "1"
+      }
+    },
+    {
+      "name": "android-debug",
+      "displayName": "GGER Android APK (debug)",
+      "description": "Debug APK assembled by Gradle with the standard debug signing key.",
+      "inherits": "android",
+      "binaryDir": "${sourceDir}/build/android-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "NW_ANDROID_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "ps5-native",
+      "displayName": "GGER PS5 native title (release)",
+      "description": "Native eboot.bin and title directory. Requires PS5_SDK.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/ps5-native",
+      "toolchainFile": "${sourceDir}/cmake/toolchain-ps5-native.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "NW_DEBUG_TOOLS": "OFF"
+      }
+    },
+    {
+      "name": "ps5-native-debug",
+      "displayName": "GGER PS5 native title (debug)",
+      "description": "Native PS5 title with developer diagnostics enabled.",
+      "inherits": "ps5-native",
+      "binaryDir": "${sourceDir}/build/ps5-native-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "NW_DEBUG_TOOLS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "linux-x86_64",
+      "configurePreset": "linux-x86_64"
+    },
+    {
+      "name": "linux-x86_64-debug",
+      "configurePreset": "linux-x86_64-debug"
+    },
+    {
+      "name": "windows-x64-mingw",
+      "configurePreset": "windows-x64-mingw"
+    },
+    {
+      "name": "windows-x64-mingw-debug",
+      "configurePreset": "windows-x64-mingw-debug"
+    },
+    {
+      "name": "android",
+      "configurePreset": "android"
+    },
+    {
+      "name": "android-debug",
+      "configurePreset": "android-debug"
+    },
+    {
+      "name": "ps5-native",
+      "configurePreset": "ps5-native"
+    },
+    {
+      "name": "ps5-native-debug",
+      "configurePreset": "ps5-native-debug"
+    }
+  ]
+}

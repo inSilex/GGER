@@ -1,0 +1,41 @@
+diff --git a/src/usr.sbin/makefs/Makefile b/src/usr.sbin/makefs/Makefile
+index a07b91c..da543df 100644
+--- a/src/usr.sbin/makefs/Makefile
++++ b/src/usr.sbin/makefs/Makefile
+@@ -26,6 +26,7 @@ CFLAGS+=	\
+ 	-I../../sbin/fsck \
+ 	-I../../sbin/newfs_msdos \
+ 	-I../../contrib/libc-vis \
++	-I../../contrib/mknod \
+ 	-I../../contrib/mtree \
+ 	-I../../lib/libutil
+ 
+@@ -64,7 +65,6 @@ ifeq ($(UNAME), Linux)
+ 		../../contrib/libc-pwcache/pwcache.o \
+ 		../../contrib/libc-vis/unvis.o \
+ 		../../contrib/libc-vis/vis.o \
+-		../../contrib/mtree/libmd.o \
+ 		../../lib/libc/gen/getprogname.o \
+ 		../../lib/libc/gen/setmode.o \
+ 		../../lib/libc/gen/setprogname.o \
+@@ -78,7 +78,6 @@ ifeq ($(UNAME), CYGWIN_NT-10.0)
+ 		../../contrib/libc-pwcache/pwcache.o \
+ 		../../contrib/libc-vis/unvis.o \
+ 		../../contrib/libc-vis/vis.o \
+-		../../contrib/mtree/libmd.o \
+ 		../../lib/libc/gen/getprogname.o \
+ 		../../lib/libc/gen/setmode.o \
+ 		../../lib/libc/gen/setprogname.o \
+@@ -107,12 +106,6 @@ ifeq ($(UNAME), DragonFly)
+ endif
+ 
+ LDLIBS:=
+-ifeq ($(UNAME), Linux)
+-	LDLIBS+=	-lcrypto
+-endif
+-ifeq ($(UNAME), CYGWIN_NT-10.0)
+-	LDLIBS+=	-lcrypto
+-endif
+ ifeq ($(UNAME), FreeBSD)
+ 	LDLIBS+=	-lutil -lmd
+ endif

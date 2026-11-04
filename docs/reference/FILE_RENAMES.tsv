@@ -1,0 +1,16 @@
+group_file	unit_macro	historical_path	original_path	reason
+audio/win32/UtNotify.c	NW_UNIT_UtNotifyReadWaveOutVolume	audio/win32/UtNotifyReadWaveOutVolume.c	c/UtNotifyStub0x0040a0c4.c	Callback now names the behavior instead of its recovered address.
+audio/win32/UtNotify.c	NW_UNIT_UtNotifyReadMidiVolume	audio/win32/UtNotifyReadMidiVolume.c	c/UtNotifyStub0x0040a494.c	Callback now names the behavior instead of its recovered address.
+diag/win32/Diagnostics.c	NW_UNIT_NwDiagLoopHook	diag/win32/NwDiagLoopHook.c	c/zNwDiagLoopHook.c	Dropped the link-order prefix and moved to win32; order is pinned in src/link_order.txt.
+game/GameState.c	NW_UNIT_ClearGridActiveFlag	game/ClearGridActiveFlag.c	c/ClearGlobalFlag417808.c	Removed the recovered address from the function and file name.
+generated/LayoutGlue.c	NW_UNIT_NwTextPad	generated/NwTextPad.c	c/zNwTextPad.c	Dropped the link-order prefix; the object stays last in src/link_order.txt.
+grid/GridCore.c	NW_UNIT_WrapGridAxesAndDispatch	grid/WrapGridAxesAndDispatch.c	c/FunAxisWrapClone_00403d38.c	Replaced the recovered function name with its behavior.
+runtime/Hooks.c	NW_UNIT_ForwardStackArgToSlotHook	runtime/ForwardStackArgToSlotHook.c	c/CallSlotHookWithStackArgRet4.c	Replaced calling-convention shorthand with the action performed.
+runtime/Heap.c	NW_UNIT_InstallInitialHeapRegionBounds	runtime/InstallInitialHeapRegionBounds.c	c/FUN_00404aa8.c	Named the recovered helper by its effect on the heap chain.
+runtime/Hooks.c	NW_UNIT_NativeProbeReturnsTrue	runtime/NativeProbeReturnsTrue.c	c/Fun0x409891ReturnsTrueStub.c	Named the probe by its result.
+runtime/Hooks.c	NW_UNIT_NoOpStackCleanupStub	runtime/NoOpStackCleanupStub.c	c/FunNoOpRet4Stub.c	Named the callback by its behavior; external symbol is preserved by asm alias.
+runtime/Slots.c	NW_UNIT_ReturnTrueSlotHook	runtime/ReturnTrueSlotHook.c	c/Fun40A520HookReturnsTrueStub.c	Named the slot callback by its behavior.
+runtime/Slots.c	NW_UNIT_SlotHookReturnOne	runtime/SlotHookReturnOne.c	c/ReturnOneRetFour.c	Named the hook by its source-level role; external symbol is preserved.
+runtime/Slots.c	NW_UNIT_SlotHookReturnOneAlt	runtime/SlotHookReturnOneAlt.c	c/ReturnOneRetFourCaseD45.c	Named the hook by its source-level role; external symbol is preserved.
+runtime/Slots.c	NW_UNIT_SlotHookReturnVoid	runtime/SlotHookReturnVoid.c	c/ReturnBareRetStub.c	Named the hook by its source-level role; external symbol is preserved.
+runtime/win32/Platform.c	NW_UNIT_ApiSlotPointers	runtime/win32/ApiSlotPointers.c	c/zApiSlotPointers.c	Dropped the link-order prefix; order is pinned in src/link_order.txt.

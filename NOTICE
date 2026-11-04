@@ -1,0 +1,18 @@
+GGER — Gamos Game Engine Reanimated
+Copyright (c) 2026 The GGER contributors
+
+The MIT License in LICENSE covers the reconstructed source code and
+documentation in this repository.
+
+It does not cover original Gamos game data or third-party components. In
+particular:
+
+- assets/Gamos_logo.png is the Gamos logo and is included for project
+  identification. It is not licensed under the MIT License.
+- NETWALK.EXE, FFLOPE.EXE, overlay.nw, extracted sprites, and other game data
+  supplied by the user remain subject to the original rights holders' terms.
+- Third-party components remain under their upstream licenses in LICENSES/ and
+  third_party/.
+
+Gamos and NetWalk are used descriptively. This project is not affiliated with
+the original rights holders.

@@ -1,0 +1,17 @@
+# Python dependencies for NetWalk developer tools.
+#
+# The build itself needs only Python 3 and its standard library.  Pillow is
+# used by the image/asset tools (nwextract.py, nwrepack.py, nwframe_repack.py,
+# nwupscale.py, and nwassets.py) for PNG and indexed-image conversion, and by
+# gen_app_icons.py to resize the central application-icon source.
+#
+# Install from the repository root:
+#
+#   python3 -m venv .venv
+#   . .venv/bin/activate
+#   python3 -m pip install -r tools/requirements.txt
+#
+# Python 3.8 or newer is supported.  Pillow 9.1 introduced Image.Resampling,
+# which the tools use.
+
+Pillow>=9.1

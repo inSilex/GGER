@@ -1,0 +1,14 @@
+.git
+.tmp
+build
+dist
+extracted
+extracted_upscaled
+platforms/android/.gradle
+platforms/android/build
+platforms/android/app/build
+platforms/android/app/.cxx
+platforms/android/local.properties
+**/__pycache__
+*.pyc
+*.log

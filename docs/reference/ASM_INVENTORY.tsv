@@ -1,0 +1,29 @@
+path	kind	cluster	asm_occurrences	code_blocks	byte_directives	volatile_sites	original_va	labels
+src/app/AppLifecycle.c	alias-only	symbol alias only	20	0	0	0	0x0040ec4c	RunInitTablesAndStoreBlockSizeInWords
+src/app/win32/AppShutdown.c	alias-only	symbol alias only	1	0	0	0	0x0040ea80	AppShutdown
+src/app/win32/WinMain.c	alias-only	symbol alias only	10	0	0	0	0x0040f250	WinMain
+src/audio/win32/WaveOutMidi.c	alias-only	symbol alias only	1	0	0	0	0x00409ee0	WaveOutMidi
+src/data/nw_datablock.c	data-only	data/embed only	2	0	0	0	0x00411000	nw_data_window
+src/diag/win32/Diagnostics.c	alias-only	symbol alias only	7	0	0	0	-	nwtrace_hex,nwtrace_asm
+src/game/GameHandlers.c	alias-only	symbol alias only	1	0	0	0	0x00408eac	GameHandlers
+src/game/GameState.c	alias-only	symbol alias only	3	0	0	0	0x40c710	IsSettingActiveByIndex
+src/grid/GridMarking.c	alias-only	symbol alias only	1	0	0	0	0x00402a68	GridMarking
+src/grid/GridSpanLifecycle.c	alias-only	symbol alias only	3	0	0	0	0x00409600	GridSpanLifecycle
+src/grid/GridSpanStreams.c	alias-only	symbol alias only	3	0	0	0	0x00406774	GridSpanStreams
+src/input/InputFields.c	alias-only	symbol alias only	1	0	0	0	0x00402e98	InputFields
+src/input/InputRouting.c	alias-only	symbol alias only	2	0	0	0	0x00403314	InputRouting
+src/io/FileSlots.c	alias-only	symbol alias only	2	0	0	0	0x00406d8c	RebaseInlineImageRecordAndLoadCursor
+src/io/SaveFiles.c	alias-only	symbol alias only	1	0	0	0	0x00406314	SaveFiles
+src/io/win32/PathHelpers.c	alias-only	symbol alias only	1	0	0	0	0x0040b2a8	PathHelpers
+src/io/win32/TrackedHandles.c	alias-only	symbol alias only	1	0	0	0	0x0040e278	TrackedHandles
+src/runtime/Heap.c	alias-only	symbol alias only	4	0	0	0	0x404a7c	Heap
+src/runtime/Hooks.c	alias-only	symbol alias only	12	0	0	0	0x00406e48	Hooks
+src/runtime/PackedFields.c	alias-only	symbol alias only	7	0	0	0	0x0040206c	PackedFields
+src/runtime/RuntimeSupport.c	alias-only	symbol alias only	1	0	0	0	0x0040d280	RuntimeSupport
+src/runtime/Slots.c	alias-only	symbol alias only	11	0	0	0	0x0040a51c	Slots
+src/runtime/win32/Platform.c	alias-only	symbol alias only	5	0	0	0	0x0040f68c	DispatchPendingSignalHandler,NwEntrySehHandler,NwUnhandledExceptionFilter
+src/ui/win32/WindowChrome.c	alias-only	symbol alias only	2	0	0	0	0x0040ad74	WindowChrome
+src/video/Palette.c	alias-only	symbol alias only	1	0	0	0	0x00402154	Palette
+src/video/VideoAssets.c	alias-only	symbol alias only	3	0	0	0	0x0040BDD4	FlushPendingSurfaceRectsAndReseedRandom
+src/vm/OpcodeExecution.c	alias-only	symbol alias only	12	0	0	0	0x404b5c	ExecuteOpcodeAndStoreOperand,ExecuteOpcodeStream,InterpretOpcodeStreamUntilEnd
+src/include/nwglobals.h	alias-only	symbol alias only	1	0	0	0		nwglobals

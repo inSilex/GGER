@@ -1,0 +1,224 @@
+name: docker-build
+
+# The overlay is game data and is intentionally not tracked. CI therefore builds
+# the Docker image and compiles Linux and Windows with --no-overlay unless the
+# checkout already contains assets/overlay.nw. PS5 is opt-in on manual dispatch.
+# Android packaging needs an overlay and a release signing key, so the compile
+# check always passes --skip-android; run docker/build-releases.sh locally with
+# an overlay and the NW_ANDROID_* signing variables to produce a signed APK.
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      build_ps5:
+        description: Build the native PS5 title
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docker:
+    name: Docker image and release compile
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      DOCKER_BUILDKIT: "1"
+      DOCKER_IMAGE: netwalk-build:ci
+      RELEASE_OUT: ${{ github.workspace }}/dist/ci-releases
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Show Docker and source versions
+        run: |
+          set -euo pipefail
+          docker version
+          git rev-parse --short HEAD
+
+      - name: Build Docker image
+        run: |
+          set -euo pipefail
+          docker build \
+            --progress=plain \
+            --platform linux/amd64 \
+            -f docker/Dockerfile \
+            -t "$DOCKER_IMAGE" \
+            . 2>&1 | tee "$RUNNER_TEMP/docker-build.log"
+
+      - name: Validate image toolchain
+        run: |
+          set -euo pipefail
+          docker run --rm --platform linux/amd64 --entrypoint bash "$DOCKER_IMAGE" -lc '
+            set -euo pipefail
+            gcc --version | sed -n "1p"
+            cmake --version | sed -n "1p"
+            ninja --version
+            x86_64-w64-mingw32-gcc --version | sed -n "1p"
+            python3 --version
+            python3 -c "import PIL; print(PIL.__version__)"
+            java -version 2>&1 | sed -n "1p"
+            sdkmanager --version
+            test -d "$ANDROID_SDK_ROOT/ndk/27.2.12479018"
+            test -x "$ANDROID_SDK_ROOT/build-tools/35.0.0/zipalign"
+            test -f "$PS5_SDK/toolchain/prospero.cmake"
+            test -x "$PS5_SDK/bin/prospero-clang"
+            llvm-config-20 --version | grep -q "^20[.]"
+            test -x "$NW_PS5_NATIVE_TOOL"
+            test -f "$NW_PS5_NATIVE_LIBC"
+            test -x "$NW_PS5_MAKEFS"
+            glibc=$(ldd --version | sed -n "1p")
+            echo "$glibc"
+            case "$glibc" in
+              *2.39*) ;;
+              *) echo "unexpected glibc in image" >&2; exit 1 ;;
+            esac
+          '
+
+      - name: Compile release artifacts
+        id: compile
+        run: |
+          set -euo pipefail
+          mkdir -p "$RELEASE_OUT"
+          mode=full
+          overlay_args=()
+          ps5_args=()
+          build_ps5=false
+          if [[ "${{ inputs.build_ps5 }}" == "true" ]]; then
+            build_ps5=true
+            ps5_args+=(--ps5)
+          fi
+          if [[ ! -f assets/overlay.nw ]]; then
+            mode=compile-only
+            overlay_args+=(--no-overlay)
+            echo "::notice title=Overlay absent::assets/overlay.nw is not tracked; compiling with --no-overlay."
+          fi
+          printf "%s\n" "$mode" > "$RELEASE_OUT/BUILD-MODE.txt"
+          printf "mode=%s\n" "$mode" >> "$GITHUB_OUTPUT"
+          printf "build_ps5=%s\n" "$build_ps5" >> "$GITHUB_OUTPUT"
+          ./docker/build-releases.sh \
+            --image "$DOCKER_IMAGE" \
+            --no-build-image \
+            --skip-android \
+            --out "$RELEASE_OUT" \
+            --jobs "$(nproc)" \
+            "${ps5_args[@]}" \
+            "${overlay_args[@]}" 2>&1 | tee "$RUNNER_TEMP/docker-release.log"
+
+      - name: Validate release artifacts
+        run: |
+          set -euo pipefail
+          mode=$(cat "$RELEASE_OUT/BUILD-MODE.txt")
+          linux="$RELEASE_OUT/linux-x86_64/NETWALK.EXE"
+          windows="$RELEASE_OUT/windows-x64-mingw/netwalk.exe"
+
+          test -x "$linux"
+          test -f "$windows"
+          file "$linux" "$windows"
+
+          readelf -d "$linux" | tee "$RUNNER_TEMP/linux-needed.txt"
+          needed=$(sed -n "s/.*Shared library: \[\(.*\)\]/\1/p" "$RUNNER_TEMP/linux-needed.txt")
+          test -n "$needed"
+          printf "Direct ELF dependencies:\n%s\n" "$needed"
+          unexpected=$(printf "%s\n" "$needed" | grep -Ev "^(libm\.so\.6|libc\.so\.6)$" || true)
+          if [[ -n "$unexpected" ]]; then
+            echo "unexpected link-time dependency: $unexpected" >&2
+            exit 1
+          fi
+
+          ldd "$linux" | tee "$RUNNER_TEMP/linux-ldd.txt"
+
+          max_glibc=$(strings -a "$linux" | grep -E "^GLIBC_[0-9]+\.[0-9]+$" | sort -Vu | tail -1)
+          echo "max GLIBC symbol: $max_glibc"
+          if [[ "$max_glibc" =~ ^GLIBC_2\.([0-9]+)$ ]]; then
+            minor=${BASH_REMATCH[1]}
+            if (( minor > 39 )); then
+              echo "GLIBC floor is newer than Ubuntu 24.04" >&2
+              exit 1
+            fi
+          else
+            echo "unexpected max GLIBC symbol: $max_glibc" >&2
+            exit 1
+          fi
+
+          file "$windows" | grep -q "PE32+ executable.*x86-64"
+
+          for dir in linux-x86_64 windows-x64-mingw; do
+            test -f "$RELEASE_OUT/$dir/gm.sf2"
+          done
+          if [[ "$mode" == "full" ]]; then
+            test -f "$RELEASE_OUT/linux-x86_64/overlay.nw"
+            test -f "$RELEASE_OUT/windows-x64-mingw/overlay.nw"
+          else
+            test ! -e "$RELEASE_OUT/linux-x86_64/overlay.nw"
+            test ! -e "$RELEASE_OUT/windows-x64-mingw/overlay.nw"
+          fi
+
+          if [[ "${{ steps.compile.outputs.build_ps5 }}" == "true" ]]; then
+            ps5="$RELEASE_OUT/PPSA99877"
+            test -f "$ps5/eboot.bin"
+            test -f "$ps5/sce_module/libc.prx"
+            test -f "$ps5/sce_sys/param.json"
+            test -f "$ps5/sce_sys/icon0.png"
+            test -f "$ps5/gm.sf2"
+            if [[ "$mode" == "full" ]]; then
+              test -f "$ps5/overlay.nw"
+            else
+              test ! -e "$ps5/overlay.nw"
+            fi
+            python3 platforms/ps5/tools/validate-native.py "$ps5"
+            sha256sum "$linux" "$windows" "$ps5/eboot.bin" \
+              | tee "$RUNNER_TEMP/sha256.txt"
+          else
+            test ! -e "$RELEASE_OUT/PPSA99877"
+            test ! -e "$RELEASE_OUT/PPSA99877.ffpkg"
+            sha256sum "$linux" "$windows" |
+              tee "$RUNNER_TEMP/sha256.txt"
+          fi
+
+      - name: Upload release artifacts
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: netwalk-docker-${{ steps.compile.outputs.mode }}
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            ${{ github.workspace }}/dist/ci-releases/linux-x86_64/**
+            ${{ github.workspace }}/dist/ci-releases/windows-x64-mingw/**
+            ${{ github.workspace }}/dist/ci-releases/BUILD-MODE.txt
+
+      - name: Upload PS5 artifacts
+        if: success() && steps.compile.outputs.build_ps5 == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: netwalk-docker-${{ steps.compile.outputs.mode }}-ps5
+          if-no-files-found: error
+          retention-days: 14
+          path: |
+            ${{ github.workspace }}/dist/ci-releases/PPSA99877/**
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: netwalk-docker-logs
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            ${{ runner.temp }}/docker-build.log
+            ${{ runner.temp }}/docker-release.log
+            ${{ runner.temp }}/linux-needed.txt
+            ${{ runner.temp }}/linux-ldd.txt
+            ${{ runner.temp }}/sha256.txt

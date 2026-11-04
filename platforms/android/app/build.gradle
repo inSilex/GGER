@@ -1,0 +1,144 @@
+plugins {
+    id 'com.android.application'
+}
+
+def repoRoot = rootProject.projectDir.parentFile.parentFile
+def netwalkRenderScale = (project.findProperty('netwalkRenderScale') ?: '1').toString()
+def netwalkNdkVersion = (project.findProperty('netwalkNdkVersion')
+        ?: '27.2.12479018').toString()
+def netwalkAbis = (project.findProperty('netwalkAbis') ?: 'arm64-v8a,x86_64')
+        .toString().split(',').collect { it.trim() }.findAll { it }
+def netwalkOverlay = project.findProperty('netwalkOverlay')
+        ?: new File(repoRoot, 'assets/overlay.nw').path
+def netwalkOverlayFile = rootProject.file(netwalkOverlay)
+def netwalkAssetStage = layout.buildDirectory.dir('generated/netwalkAssets')
+def netwalkSigning = [
+        storeFile: System.getenv('NW_ANDROID_KEYSTORE'),
+        storePassword: System.getenv('NW_ANDROID_KEYSTORE_PASSWORD'),
+        keyAlias: System.getenv('NW_ANDROID_KEY_ALIAS'),
+        keyPassword: System.getenv('NW_ANDROID_KEY_PASSWORD'),
+]
+def netwalkSigningConfigured = netwalkSigning.values().every {
+    it != null && !it.toString().trim().isEmpty()
+}
+def netwalkKeystoreFile = null
+if (netwalkSigningConfigured) {
+    def configuredKeystore = new File(netwalkSigning.storeFile)
+    // Relative paths are documented from the repository root, two levels
+    // above Gradle's platforms/android root project.
+    netwalkKeystoreFile = configuredKeystore.isAbsolute()
+            ? configuredKeystore
+            : new File(repoRoot, netwalkSigning.storeFile)
+}
+
+android {
+    namespace = 'com.netwalk.android'
+    compileSdkVersion 35
+    ndkVersion = netwalkNdkVersion
+
+    defaultConfig {
+        applicationId = 'com.netwalk.android'
+        minSdkVersion 21
+        targetSdkVersion 35
+        versionCode 1
+        versionName = '1.0'
+
+        externalNativeBuild {
+            cmake {
+                arguments '-DANDROID_PLATFORM=android-21',
+                          '-DANDROID_STL=c++_static',
+                          '-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON',
+                          "-DNW_ANDROID_RENDER_SCALE=${netwalkRenderScale}"
+                abiFilters(*netwalkAbis)
+            }
+        }
+    }
+
+    signingConfigs {
+        release {
+            if (netwalkSigningConfigured) {
+                storeFile netwalkKeystoreFile
+                storePassword netwalkSigning.storePassword
+                keyAlias netwalkSigning.keyAlias
+                keyPassword netwalkSigning.keyPassword
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'),
+                          'proguard-rules.pro'
+            if (netwalkSigningConfigured) {
+                signingConfig signingConfigs.release
+            }
+        }
+    }
+
+    sourceSets {
+        main {
+            assets.srcDirs += netwalkAssetStage
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path '../../../CMakeLists.txt'
+            version '3.22.1'
+        }
+    }
+
+    lint {
+        abortOnError = false
+    }
+}
+
+tasks.register('stageNetWalkAssets', Copy) {
+    into netwalkAssetStage
+    doFirst {
+        def soundFont = new File(repoRoot, 'third_party/windowsgs/gm.sf2')
+        if (!netwalkOverlayFile.isFile()) {
+            throw new GradleException(
+                "NetWalk overlay not found: ${netwalkOverlayFile}\n" +
+                "Extract assets/overlay.nw or pass -PnetwalkOverlay=/path/to/overlay.nw")
+        }
+        if (!soundFont.isFile()) {
+            throw new GradleException("NetWalk SoundFont not found: ${soundFont}")
+        }
+    }
+    from(netwalkOverlayFile) {
+        // The game always opens overlay.nw; allow a custom source filename.
+        rename { 'overlay.nw' }
+    }
+    from(new File(repoRoot, 'third_party/windowsgs/gm.sf2'))
+}
+
+tasks.named('preBuild').configure {
+    dependsOn('stageNetWalkAssets')
+}
+
+tasks.register('validateReleaseSigning') {
+    doLast {
+        if (!netwalkSigningConfigured) {
+            throw new GradleException(
+                "Release APK signing is not configured.\n" +
+                "Export NW_ANDROID_KEYSTORE, NW_ANDROID_KEYSTORE_PASSWORD, " +
+                "NW_ANDROID_KEY_ALIAS, and NW_ANDROID_KEY_PASSWORD, or use " +
+                "the android-debug preset.")
+        }
+        if (!netwalkKeystoreFile.isFile()) {
+            throw new GradleException(
+                "NW_ANDROID_KEYSTORE does not exist: ${netwalkKeystoreFile}")
+        }
+    }
+}
+
+tasks.configureEach { task ->
+    if (task.name == 'preReleaseBuild') {
+        task.dependsOn('validateReleaseSigning')
+    }
+}
+
+dependencies {
+}

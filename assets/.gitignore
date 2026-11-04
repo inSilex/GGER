@@ -1,0 +1,14 @@
+# Generated NetWalk game assets.
+#
+# overlay.nw is rebuilt from the original NETWALK.EXE by tools/nwextract.py or
+# by docker/build-releases.sh --extract-assets. Runtime sprite dumps, rendered
+# asset trees, and repacked overlays are generated artifacts too. Keeping them
+# ignored avoids committing multi-megabyte game data or debug dumps.
+#
+# Runtime saves are created by the game and are not source assets.
+*
+!.gitignore
+!icon.png
+!Gamos_logo.png
+!icons/
+!icons/**
