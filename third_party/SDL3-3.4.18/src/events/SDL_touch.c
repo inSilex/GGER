@@ -45,6 +45,7 @@ static SDL_Touch **SDL_touchDevices SDL_GUARDED_BY(SDL_touch_lock) = NULL;
 static bool finger_touching = false;
 static SDL_FingerID track_fingerid;
 static SDL_TouchID track_touchid;
+static SDL_WindowID track_windowid;
 
 // Public functions
 bool SDL_InitTouch(void)
@@ -395,10 +396,12 @@ void SDL_SendTouch(Uint64 timestamp, SDL_TouchID id, SDL_FingerID fingerid, SDL_
                             finger_touching = true;
                             track_touchid = id;
                             track_fingerid = fingerid;
+                            track_windowid = window ? SDL_GetWindowID(window) : 0;
                         }
                     } else {
                         if (finger_touching == true && track_touchid == id && track_fingerid == fingerid) {
                             finger_touching = false;
+                            track_windowid = 0;
                         }
                     }
                 }
@@ -468,6 +471,31 @@ void SDL_SendTouch(Uint64 timestamp, SDL_TouchID id, SDL_FingerID fingerid, SDL_
         }
     }
     SDL_UnlockTouch();
+}
+
+/* Local NetWalk patch: a finger that is still down when the application is
+ * backgrounded may never receive a finger-up event (a system gesture or the
+ * home button can interrupt the touch).  The synthetic touch-to-mouse bridge
+ * then stays latched and every later tap produces no mouse button at all,
+ * which looks like touches no longer working.  Forget the press, releasing the
+ * button if it was already delivered. */
+void SDL_ResetTouchMouseState(void)
+{
+    if (!finger_touching) {
+        return;
+    }
+
+    if (track_windowid) {
+        SDL_Window *window = SDL_GetWindowFromID(track_windowid);
+        if (window) {
+            SDL_SendMouseButton(0, window, SDL_TOUCH_MOUSEID, SDL_BUTTON_LEFT, false);
+        }
+    }
+
+    finger_touching = false;
+    track_touchid = 0;
+    track_fingerid = 0;
+    track_windowid = 0;
 }
 
 void SDL_SendTouchMotion(Uint64 timestamp, SDL_TouchID id, SDL_FingerID fingerid, SDL_Window *window,

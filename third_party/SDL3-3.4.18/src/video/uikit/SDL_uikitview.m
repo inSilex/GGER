@@ -311,14 +311,46 @@ extern int SDL_AppleTVRemoteOpenedAsJoystick;
     }
 }
 
+/* Local NetWalk patch: UIKit can deliver a touch, or a safe-area change,
+ * before -viewDidLayoutSubviews has forwarded the new view bounds to SDL.  If
+ * the SDL window still carries the previous orientation's size, the synthetic
+ * touch-to-mouse bridge scales the reported position with that stale size, so
+ * taps land in the wrong place until the next layout pass.  Pull the size from
+ * the live view bounds first. */
+- (void)syncSDLWindowSize
+{
+    int w;
+    int h;
+
+    if (sdlwindow == NULL) {
+        return;
+    }
+
+    w = (int)self.bounds.size.width;
+    h = (int)self.bounds.size.height;
+    if (w <= 0 || h <= 0) {
+        return;
+    }
+
+    SDL_SendWindowEvent(sdlwindow, SDL_EVENT_WINDOW_RESIZED, w, h);
+}
+
 - (CGPoint)touchLocation:(UITouch *)touch shouldNormalize:(BOOL)normalize
 {
-    CGPoint point = [touch locationInView:self];
+    CGPoint point;
+
+    [self syncSDLWindowSize];
+    point = [touch locationInView:self];
 
     if (normalize) {
         CGRect bounds = self.bounds;
-        point.x /= bounds.size.width;
-        point.y /= bounds.size.height;
+        if (bounds.size.width > 0.0 && bounds.size.height > 0.0) {
+            point.x /= bounds.size.width;
+            point.y /= bounds.size.height;
+        } else {
+            point.x = 0.0;
+            point.y = 0.0;
+        }
     }
 
     return point;
@@ -471,6 +503,11 @@ extern int SDL_AppleTVRemoteOpenedAsJoystick;
 
 - (void)safeAreaInsetsDidChange
 {
+    /* Local NetWalk patch: the insets can arrive before the layout pass has
+     * updated the window size, which would compute the safe rectangle against
+     * the previous orientation.  Sync the new bounds first. */
+    [self syncSDLWindowSize];
+
     // Update the safe area insets
     SDL_SetWindowSafeAreaInsets(sdlwindow,
                                 (int)SDL_ceilf(self.safeAreaInsets.left),

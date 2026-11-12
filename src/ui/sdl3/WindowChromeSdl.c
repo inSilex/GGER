@@ -330,6 +330,48 @@ NW_SDL_CODE void NwSdlFitViewport4x3(int availW, int availH,
         *ph = h;
 }
 
+/* Size used for viewport fitting, control layout, and hit-testing.  On iOS the
+ * live view bounds are authoritative: SDL's window size can lag them by one
+ * layout pass while presentation has already been resized to the new bounds.
+ * Using the same source for both drawing and input keeps a drawn button and
+ * its tap target in the same place. */
+NW_SDL_CODE static void nw_window_metrics_size(int *pw, int *ph)
+{
+    int w = 0;
+    int h = 0;
+
+    if (g_nwSdlWindow != NULL) {
+        (void)SDL_GetWindowSize(g_nwSdlWindow, &w, &h);
+#if defined(NW_PORTABLE_IOS)
+        /* The window surface is allocated from the view bounds in points.  If
+         * high pixel density were enabled the pixel size would be in a
+         * different unit than SDL's pointer coordinates, so leave it alone. */
+        if (!(SDL_GetWindowFlags(g_nwSdlWindow) &
+              SDL_WINDOW_HIGH_PIXEL_DENSITY)) {
+            int lw = 0;
+            int lh = 0;
+            if (SDL_GetWindowSizeInPixels(g_nwSdlWindow, &lw, &lh) &&
+                lw > 0 && lh > 0) {
+                w = lw;
+                h = lh;
+            }
+        }
+#endif
+    }
+    if (w <= 0)
+        w = (int)g_dwClientW;
+    if (h <= 0)
+        h = (int)g_dwClientH;
+    if (w <= 0)
+        w = 640;
+    if (h <= 0)
+        h = 480;
+    if (pw != NULL)
+        *pw = w;
+    if (ph != NULL)
+        *ph = h;
+}
+
 /* Current game viewport in window coordinates.  A normal 4:3 window maps to
  * the whole window; borderless desktop fullscreen on a wider display gets
  * centered black bars on the left and right. */
@@ -338,16 +380,7 @@ NW_SDL_CODE void NwSdlWindowViewport(int *px, int *py, int *pw, int *ph)
     int ww = 0;
     int wh = 0;
 
-    if (g_nwSdlWindow != NULL)
-        (void)SDL_GetWindowSize(g_nwSdlWindow, &ww, &wh);
-    if (ww <= 0)
-        ww = (int)g_dwClientW;
-    if (wh <= 0)
-        wh = (int)g_dwClientH;
-    if (ww <= 0)
-        ww = 640;
-    if (wh <= 0)
-        wh = 480;
+    nw_window_metrics_size(&ww, &wh);
     NwSdlFitViewport4x3(ww, wh, px, py, pw, ph);
 }
 
@@ -594,9 +627,10 @@ NW_SDL_CODE static int nw_android_metrics(SDL_Rect *pHandle, SDL_Rect *pCard,
 
     if (pInBar != NULL)
         *pInBar = 0;
-    if (g_nwSdlWindow == NULL ||
-        !SDL_GetWindowSize(g_nwSdlWindow, &ww, &wh) ||
-        ww <= 0 || wh <= 0)
+    if (g_nwSdlWindow == NULL)
+        return 0;
+    nw_window_metrics_size(&ww, &wh);
+    if (ww <= 0 || wh <= 0)
         return 0;
 
     safe.x = 0;
@@ -609,6 +643,26 @@ NW_SDL_CODE static int nw_android_metrics(SDL_Rect *pHandle, SDL_Rect *pCard,
         safe.y = 0;
         safe.w = ww;
         safe.h = wh;
+    } else {
+        /* iPadOS can report the previous orientation's safe area for a short
+         * time while a rotation settles.  Keep the rectangle inside the live
+         * window so the bars and card never move outside the touchable area. */
+        SDL_Rect windowRect;
+        SDL_Rect clamped;
+
+        windowRect.x = 0;
+        windowRect.y = 0;
+        windowRect.w = ww;
+        windowRect.h = wh;
+        if (SDL_GetRectIntersection(&safe, &windowRect, &clamped) &&
+            clamped.w > 0 && clamped.h > 0) {
+            safe = clamped;
+        } else {
+            safe.x = 0;
+            safe.y = 0;
+            safe.w = ww;
+            safe.h = wh;
+        }
     }
 
     unit = nw_android_min(ww, wh);

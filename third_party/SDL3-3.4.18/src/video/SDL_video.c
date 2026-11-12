@@ -31,6 +31,7 @@
 #include "SDL_rect_c.h"
 #include "SDL_video_c.h"
 #include "../events/SDL_events_c.h"
+#include "../events/SDL_touch_c.h"
 #include "../SDL_hints_c.h"
 #include "../SDL_properties_c.h"
 #include "../timer/SDL_timer_c.h"
@@ -6227,6 +6228,7 @@ void SDL_OnApplicationWillEnterBackground(void)
         for (window = _this->windows; window; window = window->next) {
             SDL_SendWindowEvent(window, SDL_EVENT_WINDOW_MINIMIZED, 0, 0);
         }
+        SDL_ResetTouchMouseState();
         SDL_SetKeyboardFocus(NULL);
     }
     SDL_SendAppEvent(SDL_EVENT_WILL_ENTER_BACKGROUND);

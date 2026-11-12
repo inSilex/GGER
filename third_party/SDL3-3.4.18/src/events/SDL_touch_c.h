@@ -43,6 +43,9 @@ extern void SDL_SendTouch(Uint64 timestamp, SDL_TouchID id, SDL_FingerID fingeri
 // Send a touch motion event for a touch
 extern void SDL_SendTouchMotion(Uint64 timestamp, SDL_TouchID id, SDL_FingerID fingerid, SDL_Window *window, float x, float y, float pressure);
 
+// Forget a synthetic touch-to-mouse press that may never have been released
+extern void SDL_ResetTouchMouseState(void);
+
 // Remove a touch
 extern void SDL_DelTouch(SDL_TouchID id);
 

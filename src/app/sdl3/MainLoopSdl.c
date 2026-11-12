@@ -1224,6 +1224,14 @@ NW_SDL_CODE static int nw_handle_sdl_event(const SDL_Event *pEvent)
         NwSdlVideoPresent();
         return 0;
 
+    case SDL_EVENT_WINDOW_SAFE_AREA_CHANGED:
+        /* The control bars are laid out inside the safe area.  Present a fresh
+         * frame so what is drawn on screen matches the rectangles used for the
+         * next hit test, even when the game itself is idle. */
+        NwSdlEnforceWindowAspect();
+        NwSdlVideoPresentNow();
+        return 0;
+
     case SDL_EVENT_WINDOW_MINIMIZED:
         g_bSdlMinimized = 1;
         return 0;

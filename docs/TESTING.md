@@ -413,6 +413,12 @@ Device runtime checks:
 - A tap rotates a tile through SDL's touch-to-mouse bridge, delivered as the
   selected click mode. Touches on a virtual control are consumed before the
   game sees them.
+- Send the app to the Home screen and rotate the iPad several times before
+  returning. The first tap after returning still lands where it is aimed, and
+  the bar controls remain clickable. SDL keeps its window size synced to the
+  live view bounds for touches and safe-area changes, redraws immediately when
+  the safe area changes, and forgets a synthetic touch-to-mouse press that the
+  background transition interrupted.
 - `EXIT` leaves the game through the normal shutdown path. A first launch
   creates `NETWALK0.282` in `SDL_GetPrefPath("Gamos", "NetWalk")`; relaunching
   preserves high scores.
