@@ -391,6 +391,7 @@ NW_SDL_CODE void NwSdlWindowViewport(int *px, int *py, int *pw, int *ph)
 static int g_nwSdlAndroidPressed NW_SDL_BSS;
 static int g_nwSdlAndroidRotationLocked NW_SDL_BSS;
 static int g_nwSdlAndroidMouseRight NW_SDL_BSS;
+static Uint64 g_nwSdlAndroidClickPressAt NW_SDL_BSS;
 static int g_nwSdlAndroidCardOpen NW_SDL_BSS;
 static int g_nwSdlAndroidCardAnimFrom NW_SDL_BSS;
 static Uint64 g_nwSdlAndroidCardAnimStart NW_SDL_BSS;
@@ -412,6 +413,12 @@ static char g_nwSdlIosRotationMask[32] NW_SDL_BSS;
  * player taps outside it. */
 #define NW_SDL_CARD_SLIDE_MS 180u
 #define NW_SDL_CARD_HOLD_MS  4000u
+
+/* A short tap on the click-mode control toggles left/right as before.  Holding
+ * it for this long turns it into a momentary modifier instead: the mouse mode
+ * is inverted while the control stays down, and releasing it leaves the
+ * selected mode unchanged. */
+#define NW_SDL_CLICK_HOLD_MS 350u
 
 static int nw_android_card_progress_now(void)
 {
@@ -1073,6 +1080,56 @@ NW_SDL_CODE int NwSdlAndroidControlHit(int x, int y)
 #endif
 }
 
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+/* The click-mode control becomes a momentary modifier once it has been held
+ * past the toggle window.  It is only a modifier while that same control is
+ * still the pressed one. */
+NW_SDL_CODE static int nw_android_click_modifier(void)
+{
+    if (g_nwSdlAndroidPressed != NW_ANDROID_CONTROL_CLICK)
+        return 0;
+    return SDL_GetTicks() - g_nwSdlAndroidClickPressAt >= NW_SDL_CLICK_HOLD_MS;
+}
+#endif
+
+NW_SDL_CODE int NwSdlAndroidClickModifierActive(void)
+{
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+    return nw_android_click_modifier();
+#else
+    return 0;
+#endif
+}
+
+/* SDL normalizes touch coordinates to the window; convert them to the same
+ * window coordinates its pointer events use, so the control hit tests and the
+ * logical mapping stay in one unit.  On iOS that is points, matching the
+ * layout; Android's window size is already in pixels. */
+NW_SDL_CODE void NwSdlAndroidTouchPoint(float nx, float ny, int *px, int *py)
+{
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+    int ww = 0;
+    int wh = 0;
+
+    nw_window_metrics_size(&ww, &wh);
+    if (ww <= 0)
+        ww = 1;
+    if (wh <= 0)
+        wh = 1;
+    if (px != NULL)
+        *px = (int)(nx * (float)ww);
+    if (py != NULL)
+        *py = (int)(ny * (float)wh);
+#else
+    (void)nx;
+    (void)ny;
+    if (px != NULL)
+        *px = 0;
+    if (py != NULL)
+        *py = 0;
+#endif
+}
+
 NW_SDL_CODE int NwSdlAndroidControlPressed(void)
 {
 #if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
@@ -1086,6 +1143,8 @@ NW_SDL_CODE void NwSdlAndroidControlPress(int id)
 {
 #if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
     g_nwSdlAndroidPressed = id;
+    if (id == NW_ANDROID_CONTROL_CLICK)
+        g_nwSdlAndroidClickPressAt = SDL_GetTicks();
     nw_android_note_interaction();
 #else
     (void)id;
@@ -1149,15 +1208,19 @@ NW_SDL_CODE int NwSdlAndroidToggleKeyboard(void)
 
 /* Returns the activated control id or 0 when the release happened outside the
  * pressed control.  The caller performs the action (quit, keyboard toggle,
- * rotation lock, or click-mode toggle) so the input unit owns game semantics. */
+ * rotation lock, or click-mode toggle) so the input unit owns game semantics.
+ * A click-mode release after the hold threshold reports nothing: that press
+ * acted as a momentary modifier, so the selected mode is left alone. */
 NW_SDL_CODE int NwSdlAndroidControlRelease(int x, int y)
 {
 #if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
     int pressed = g_nwSdlAndroidPressed;
+    int modifier = nw_android_click_modifier();
+
     g_nwSdlAndroidPressed = 0;
     if (pressed != 0) {
         nw_android_note_interaction();
-        if (NwSdlAndroidControlHit(x, y) == pressed)
+        if (!modifier && NwSdlAndroidControlHit(x, y) == pressed)
             return pressed;
     }
     return 0;
@@ -1495,11 +1558,13 @@ NW_SDL_CODE int NwSdlAndroidRotationLocked(void)
 
 /* The single click control toggles between left and right button semantics for
  * synthetic touch mouse events.  A physical mouse or pen keeps its own
- * buttons. */
+ * buttons.  While the control is held past the toggle window it acts as a
+ * momentary modifier, so the effective mode is the opposite of the selected
+ * one; the selection itself is unchanged. */
 NW_SDL_CODE int NwSdlAndroidMouseRight(void)
 {
 #if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
-    return g_nwSdlAndroidMouseRight;
+    return g_nwSdlAndroidMouseRight ^ nw_android_click_modifier();
 #else
     return 0;
 #endif

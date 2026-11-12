@@ -12,7 +12,12 @@
  * The current set is Exit, Keyboard, rotation Lock/Unlock, and a single
  * Left/Right click-mode toggle.  The selected click mode determines how touch
  * input inside the game viewport is delivered; left click is selected at
- * startup.  The rotation-lock choice is remembered across launches: Android
+ * startup.  A short tap on the click control toggles the selection.  Holding
+ * it turns it into a momentary modifier instead: the effective mode is the
+ * opposite of the selection while the control stays down, and releasing it
+ * leaves the selection unchanged, so one finger can hold the modifier while
+ * another clicks in the game.  The rotation-lock choice is remembered across
+ * launches: Android
  * keeps it in its activity preferences, and iOS keeps it in a separate
  * rotation.cfg file in the writable preference directory (not in the game
  * save) and reapplies the pinned orientation before the first window.
@@ -56,6 +61,8 @@ int  NwSdlAndroidToggleRotationLock(void);
 int  NwSdlAndroidRotationLocked(void);
 int  NwSdlAndroidMouseRight(void);
 int  NwSdlAndroidToggleMouseRight(void);
+int  NwSdlAndroidClickModifierActive(void);
+void NwSdlAndroidTouchPoint(float nx, float ny, int *px, int *py);
 float NwSdlAndroidUnitsPerDp(void);
 int  NwSdlAndroidTabletLayout(void);
 

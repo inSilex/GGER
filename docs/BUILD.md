@@ -179,7 +179,9 @@ activity runs immersive full-screen with the status and navigation bars hidden,
 while the game still renders its centered 4:3 viewport; the unused side or
 bottom area holds the Android-only **EXIT**, **KEYBOARD**, **LOCK/UNLOCK**, and
 **L CLICK/R CLICK** controls. Touches inside the game viewport are delivered as
-the selected click mode; left click is selected at startup. The activity
+the selected click mode; left click is selected at startup. Tapping the click
+control toggles that selection, while holding it inverts the mode for as long
+as the control stays down and then restores the selection. The activity
 follows all four sensor orientations; **LOCK** pins the current orientation and
 **UNLOCK** resumes sensor rotation. Full-screen setup deliberately keeps
 `adjustResize` working so the IME can shrink the SDL surface without losing the
@@ -467,7 +469,8 @@ orientations and `UIRequiresFullScreen`; `main()` does not override
 chose at launch. Presentation fits the fixed 4:3 canvas into the real window
 and centers the letterbox bars. The same four on-screen controls as the
 Android package are `EXIT`, `KEYBOARD`, `LOCK`/`UNLOCK`, and
-`L CLICK`/`R CLICK`. The square side is capped at about 18 mm of physical
+`L CLICK`/`R CLICK`; the click control toggles on a tap and acts as a
+momentary modifier while held. The square side is capped at about 18 mm of physical
 display, and a tablet draws short names under the icons (`EXIT`, `KEYS`,
 `LOCK`/`LOCKED`, `LEFT`/`RIGHT`) while a phone stays icon-only. They are drawn
 directly in the letterbox bars when the

@@ -230,7 +230,10 @@ Check:
   other button outlined. Tapping it fills the right mouse button and outlines
   the left; tapping again returns to the left-filled icon. Touch input inside
   the viewport follows the selected mode, and a physical mouse or pen keeps its
-  own buttons.
+  own buttons. Holding the control flips the icon to the opposite mode while
+  the finger stays down, a second finger clicking in the viewport uses that
+  inverted mode, and releasing the control restores the selected mode without
+  toggling it.
 - Taps and drags inside the viewport move the game pointer and use the selected
   click mode. Taps on the buttons never reach the game.
 - The activity follows portrait and both landscape directions while unlocked,
@@ -307,7 +310,9 @@ launched with the same control set after the full-screen change. Passed:
 - `L CLICK` starts with the selected left mouse button filled and the other
   button outlined; switching to `R CLICK` fills the right button and outlines
   the left. Tapping again returns to `L CLICK`. Touch input follows the selected
-  mode while a physical mouse or pen keeps its own buttons.
+  mode while a physical mouse or pen keeps its own buttons. A long press inverts
+  the effective mode for as long as the control is held, so a second finger can
+  click with the opposite button; releasing it keeps the previous selection.
 - The controls render the generated exit, keyboard, closed-padlock,
   open-padlock, left-mouse, and right-mouse sprites from the embedded atlas;
   labels are baked into the tablet variants. The pull-down tab and card use
@@ -434,8 +439,11 @@ Device runtime checks:
     icon-only.
   - `L CLICK` starts in left-click mode with the left mouse half filled. Tapping
     it fills the right half (and changes the label to `RIGHT` where labels are
-    shown); tapping again returns to left-click mode. A physical mouse or pen
-    keeps its own buttons.
+    shown); tapping again returns to left-click mode. Holding it past the tap
+    window inverts the icon and the click mode while the control stays down,
+    without changing the selection; a second finger can click in the viewport
+    with the opposite button meanwhile. A physical mouse or pen keeps its own
+    buttons.
 - A tap rotates a tile through SDL's touch-to-mouse bridge, delivered as the
   selected click mode. Touches on a virtual control are consumed before the
   game sees them.

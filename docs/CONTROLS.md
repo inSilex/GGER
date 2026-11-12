@@ -24,7 +24,7 @@ edge swipe reveals them temporarily.
 | `F` | Toggle borderless desktop fullscreen |
 | `H` | Toggle high-resolution and original assets |
 | Touch pointer (Android, iOS) | Tap or drag inside the game viewport; delivered as the selected left or right click |
-| Click mode (Android, iOS) | Tap the mouse icon to toggle whether touch input becomes a left or right click; left is the default |
+| Click mode (Android, iOS) | Tap the mouse icon to toggle whether touch input becomes a left or right click; left is the default. Hold it to invert the mode while the control stays down without changing the selection |
 | Rotation lock (Android, iOS) | Tap the padlock icon to pin the current orientation. An active lock is drawn inverted, with a bright button and a closed padlock; unlocked uses the normal dark button and open padlock. Both platforms remember the lock state for later launches; iOS stores it in a separate `rotation.cfg` in its preference directory |
 | Exit app (Android, iOS) | Tap `EXIT` in the unused area around the game |
 | On-screen keyboard (Android, iOS) | Tap `KEYBOARD` to show or hide the IME or iOS software keyboard |
@@ -90,7 +90,12 @@ after about four idle seconds and may cover part of the game while open. The fou
   and its mouse icon fills the left top button while outlining the right one.
   Tapping it fills the right mouse button instead and delivers touch input as
   right clicks; where labels are shown the name changes from `LEFT` to `RIGHT`.
-  Tapping again returns to left-click mode.
+  Tapping again returns to left-click mode. Holding the control for about a
+  third of a second turns it into a momentary modifier instead of a toggle:
+  the icon flips to the opposite button and the mode stays inverted while the
+  control is held, then returns to the selected mode when it is released
+  without changing that selection. This lets one finger hold the modifier while
+  another clicks or drags in the game.
 
 Touches inside the game viewport become the normal game pointer, including
 clicks and drags, and are delivered as the selected click mode. A physical

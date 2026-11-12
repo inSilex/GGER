@@ -150,6 +150,17 @@ static int g_nwFullscreenFSuppressText NW_SDL_BSS;
 static int g_nwMouseLeftDownInside NW_SDL_BSS;
 static int g_nwMouseRightDownInside NW_SDL_BSS;
 
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+/* SDL synthesizes its mouse from the first finger only.  While the click
+ * modifier is held, a second finger has no synthetic mouse, so the game click
+ * for that finger is driven from the raw touch events instead. */
+static SDL_FingerID g_nwTouchGameFinger NW_SDL_BSS;
+static int g_nwTouchGameRight NW_SDL_BSS;
+/* Set when a control press came from a touch, so the finger that produced the
+ * synthetic mouse down is not mistaken for a game tap. */
+static int g_nwTouchControlFingerPending NW_SDL_BSS;
+#endif
+
 /* ---- pointer emulation for gamepads and their touchpads ------------------ */
 #define NW_MAX_POINTER_PADS 8
 #define NW_PAD_DEADZONE     7500
@@ -1306,6 +1317,11 @@ NW_SDL_CODE static int nw_handle_sdl_event(const SDL_Event *pEvent)
             if (pEvent->button.button == SDL_BUTTON_LEFT) {
                 if (control != 0) {
                     NwSdlAndroidControlPress(control);
+                    /* SDL queues the synthetic mouse press before the finger
+                     * event; the next FINGER_DOWN is the finger on the
+                     * control, not a game tap. */
+                    if (pEvent->button.which == SDL_TOUCH_MOUSEID)
+                        g_nwTouchControlFingerPending = 1;
                     NwSdlVideoPresentNow();
                     return 0;
                 }
@@ -1417,7 +1433,96 @@ NW_SDL_CODE static int nw_handle_sdl_event(const SDL_Event *pEvent)
         return 0;
 
 #if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+    case SDL_EVENT_FINGER_DOWN: {
+        int mx = 0;
+        int my = 0;
+        int lx = 0;
+        int ly = 0;
+
+        NwSdlAndroidTouchPoint(pEvent->tfinger.x, pEvent->tfinger.y,
+                               &mx, &my);
+
+        /* The finger that pressed an on-screen control already went through
+         * the synthetic mouse path. */
+        if (g_nwTouchControlFingerPending) {
+            g_nwTouchControlFingerPending = 0;
+            return 0;
+        }
+        /* Only a click-modifier hold needs the raw path, and the game pointer
+         * still handles one finger at a time. */
+        if (!NwSdlAndroidClickModifierActive() || g_nwTouchGameFinger != 0)
+            return 0;
+        if (NwSdlAndroidControlHit(mx, my) ||
+            NwSdlAndroidControlHandleHit(mx, my) ||
+            NwSdlAndroidControlCardHit(mx, my))
+            return 0;
+        if (!NwSdlWindowToLogical(mx, my, &lx, &ly))
+            return 0;
+
+        g_nwTouchGameFinger = pEvent->tfinger.fingerID;
+        g_nwTouchGameRight = NwSdlAndroidMouseRight();
+        nw_pointer_mark_mouse();
+        nw_pointer_sync_mouse(lx, ly);
+        nw_input_mouse_down(lx, ly);
+        return 0;
+    }
+
+    case SDL_EVENT_FINGER_MOTION: {
+        int mx = 0;
+        int my = 0;
+        int lx = 0;
+        int ly = 0;
+
+        if (g_nwTouchGameFinger != pEvent->tfinger.fingerID)
+            return 0;
+        NwSdlAndroidTouchPoint(pEvent->tfinger.x, pEvent->tfinger.y,
+                               &mx, &my);
+        if (!NwSdlWindowToLogical(mx, my, &lx, &ly))
+            return 0;
+        nw_pointer_mark_mouse();
+        nw_pointer_sync_mouse(lx, ly);
+        nw_input_mouse_move(lx, ly);
+        return 0;
+    }
+
+    case SDL_EVENT_FINGER_UP: {
+        int mx = 0;
+        int my = 0;
+        int lx = 0;
+        int ly = 0;
+        int right;
+
+        if (g_nwTouchGameFinger != pEvent->tfinger.fingerID)
+            return 0;
+        g_nwTouchGameFinger = 0;
+        right = g_nwTouchGameRight;
+        NwSdlAndroidTouchPoint(pEvent->tfinger.x, pEvent->tfinger.y,
+                               &mx, &my);
+        (void)NwSdlWindowToLogical(mx, my, &lx, &ly);
+        nw_pointer_mark_mouse();
+        nw_pointer_sync_mouse(lx, ly);
+        nw_input_mouse_up(lx, ly, right);
+        return 0;
+    }
+
     case SDL_EVENT_FINGER_CANCELED:
+        if (g_nwTouchGameFinger == pEvent->tfinger.fingerID) {
+            int mx = 0;
+            int my = 0;
+            int lx = 0;
+            int ly = 0;
+            int right = g_nwTouchGameRight;
+
+            g_nwTouchGameFinger = 0;
+            NwSdlAndroidTouchPoint(pEvent->tfinger.x, pEvent->tfinger.y,
+                                   &mx, &my);
+            (void)NwSdlWindowToLogical(mx, my, &lx, &ly);
+            nw_pointer_mark_mouse();
+            nw_pointer_sync_mouse(lx, ly);
+            nw_input_mouse_up(lx, ly, right);
+            return 0;
+        }
+        g_nwTouchControlFingerPending = 0;
         if (NwSdlAndroidControlPressed() != 0) {
             NwSdlAndroidControlCancel();
             NwSdlVideoPresentNow();
