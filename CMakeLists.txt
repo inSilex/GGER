@@ -400,16 +400,24 @@ if(NW_WINDOWS_HIGH_PROXY)
             powrprof m
         )
     endif()
-    add_custom_command(TARGET netwalk-hi POST_BUILD
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${NW_OVERLAY_ASSET}"
-                "$<TARGET_FILE_DIR:netwalk-hi>/overlay.nw"
-        COMMENT "Copying NetWalk overlay (high image)")
-    add_custom_command(TARGET netwalk-hi POST_BUILD
-        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
-                "${NW_SOUNDFONT_ASSET}"
-                "$<TARGET_FILE_DIR:netwalk-hi>/gm.sf2"
-        COMMENT "Copying NetWalk SoundFont (high image)")
+    if(EXISTS "${NW_OVERLAY_ASSET}")
+        add_custom_command(TARGET netwalk-hi POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "${NW_OVERLAY_ASSET}"
+                    "$<TARGET_FILE_DIR:netwalk-hi>/overlay.nw"
+            COMMENT "Copying NetWalk overlay (high image)")
+    else()
+        message(STATUS "NetWalk overlay not found: ${NW_OVERLAY_ASSET} (skipping high-image copy)")
+    endif()
+    if(EXISTS "${NW_SOUNDFONT_ASSET}")
+        add_custom_command(TARGET netwalk-hi POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                    "${NW_SOUNDFONT_ASSET}"
+                    "$<TARGET_FILE_DIR:netwalk-hi>/gm.sf2"
+            COMMENT "Copying NetWalk SoundFont (high image)")
+    else()
+        message(STATUS "NetWalk SoundFont not found: ${NW_SOUNDFONT_ASSET} (skipping high-image copy)")
+    endif()
 endif()
 
 message(STATUS "GGER target: ${CMAKE_SYSTEM_NAME}/${CMAKE_SYSTEM_PROCESSOR}")
