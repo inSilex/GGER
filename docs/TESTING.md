@@ -221,22 +221,25 @@ Check:
   game viewport and all four controls stay on screen. The soft keyboard's Enter
   key remains visible and delivers the game's Enter action instead of dismissing
   the IME.
-- `LOCK` pins the current orientation and changes to `UNLOCK` with the
-  open-padlock icon; tapping `UNLOCK` resumes sensor rotation. Force-stop or
-  relaunch the app and confirm the lock label and pinned orientation are
-  restored; unlock it, relaunch again, and confirm it follows the sensors.
+- `LOCK` pins the current orientation and switches to the inverted button with
+  the closed-padlock icon; tapping it again restores the normal button, the
+  open padlock, and sensor rotation. Force-stop or relaunch the app and confirm
+  the active lock state and pinned orientation are restored; unlock it, relaunch
+  again, and confirm it follows the sensors.
 - `L CLICK` starts in left-click mode with the left mouse button filled and the
-  other button outlined. Tapping it changes the label to `R CLICK` and fills the
-  right mouse button; tapping again returns to `L CLICK`. Touch input inside the
-  viewport follows the selected mode, and a physical mouse or pen keeps its own
-  buttons.
+  other button outlined. Tapping it fills the right mouse button and outlines
+  the left; tapping again returns to the left-filled icon. Touch input inside
+  the viewport follows the selected mode, and a physical mouse or pen keeps its
+  own buttons.
 - Taps and drags inside the viewport move the game pointer and use the selected
   click mode. Taps on the buttons never reach the game.
 - The activity follows portrait and both landscape directions while unlocked,
   keeps the 4:3 game viewport centered, and stays in the locked orientation
   after `LOCK` is tapped.
-- The controls use `EXIT` and `KEYBOARD` on one side and `LOCK` plus
-  `L CLICK`/`R CLICK` on the other.
+- The controls use `EXIT` and `KEYBOARD` on one side and the lock plus the
+  click-mode toggle on the other. Names are drawn under the icons only in a
+  tablet-sized layout, where they read `EXIT`, `KEYS`, `LOCK`/`LOCKED`, and
+  `LEFT`/`RIGHT`.
 - No in-app back button is present. The platform navigation controls are hidden
   by immersive full-screen but remain available through the system edge gesture
   where the device provides one.
@@ -286,21 +289,29 @@ launched with the same control set after the full-screen change. Passed:
   game view completely uncovered.
 - Only on a near-4:3 window, where no bar can hold the controls, does the card
   appear: only a small top tab is visible during play, and tapping it slides
-  down a wide four-button row across 70% of the display. Tapping outside the
-  card or waiting about four seconds closes it.
+  down a row of square buttons with the card sized to the row plus its padding.
+  Tapping outside the card or waiting about four seconds closes it.
+- The square is capped at about 18 mm of physical display, measured from the
+  reported density, with a tighter 64 dp ceiling for phone side columns. A
+  tablet therefore gets a phone-sized control instead of a slab; the icon is a
+  little under half the square. Phones stay icon-only, while a tablet adds a
+  readable short name under the icon.
 - Hot rotation between portrait and landscape switches between the bar and
   card layouts and keeps the game view centered.
-- `LOCK` pins the current orientation and changes to `UNLOCK` with the open
-  padlock; tapping `UNLOCK` resumes following the device sensors. The lock
-  state and exact orientation survived force-stop/relaunch in reverse landscape
-  and reverse portrait, and rotating the emulator while locked did not change
-  the display. Relaunching after `UNLOCK` restored sensor rotation.
+- `LOCK` pins the current orientation and switches to the inverted button with
+  the closed-padlock icon; tapping it again restores the normal button, open
+  padlock, and sensor rotation. The lock state and exact orientation survived
+  force-stop/relaunch in reverse landscape and reverse portrait, and rotating
+  the emulator while locked did not change the display. Relaunching after
+  unlocking restored sensor rotation.
 - `L CLICK` starts with the selected left mouse button filled and the other
   button outlined; switching to `R CLICK` fills the right button and outlines
   the left. Tapping again returns to `L CLICK`. Touch input follows the selected
   mode while a physical mouse or pen keeps its own buttons.
 - The controls render the generated exit, keyboard, closed-padlock,
-  open-padlock, left-mouse, and right-mouse icons. Control taps are consumed
+  open-padlock, left-mouse, and right-mouse sprites from the embedded atlas;
+  labels are baked into the tablet variants. The pull-down tab and card use
+  matching high-resolution panels and chevrons. Control taps are consumed
   before game input. No in-app back button is present.
 - A first launch with no save creates `NETWALK0.282` in internal storage and
   reaches the title/menu.
@@ -394,29 +405,37 @@ Device runtime checks:
     launch; tapping a text field's on-screen control is what opens it. Tapping
     anywhere outside the keyboard in the game window dismisses it, and the tap
     still reaches the game or the control under it.
-  - `LOCK` pins the current orientation; the label becomes `UNLOCK` and the
-    padlock opens. `UNLOCK` restores all orientations from `Info.plist`.
+  - `LOCK` pins the current orientation; the button switches to its inverted
+    active style with a closed padlock and the `LOCKED` label. Tapping it again
+    restores the normal dark button, open padlock, and `LOCK` label and
+    restores all orientations from `Info.plist`.
     Rotation between portrait and either landscape direction still works
     while unlocked. While locked, rotating the device by 180 degrees must not
     change the presentation. Lock the app, force-quit it, and relaunch: the
-    control comes back as `UNLOCK`, the app starts in the orientation that was
-    locked even if the device is now held the other way, and the game view is
-    not cropped or offset. With the app locked, turn the device to another
-    orientation and tap `UNLOCK`: the app immediately follows the device
-    without needing another rotation. Unlock, relaunch again, and confirm it
-    follows the sensors. The choice lives in `rotation.cfg` in the
+    control comes back locked and inverted, the app starts in the orientation
+    that was locked even if the device is now held the other way, and the game
+    view is not cropped or offset. With the app locked, turn the device to
+    another orientation and tap the lock button: the app immediately follows
+    the device without needing another rotation. Unlock, relaunch again, and
+    confirm it follows the sensors. The choice lives in `rotation.cfg` in the
     `Gamos/NetWalk` preference directory, not in `NETWALK0.282`.
   - In portrait, the buttons sit in the bottom black bar as one wide row; in
     wide landscape they split into two columns in the side bars. The game view
     stays fully visible in both bar layouts. On a near-4:3 window the controls
     move to the pull-down card: only a small top tab is visible while closed,
-    tapping it slides down a row of wide buttons across 70% of the screen, and
-    tapping outside the card or waiting about four seconds closes it.
-  - The buttons are wide rectangles with readable labels, not a full-width
-    toolbar.
-  - `L CLICK` starts in left-click mode. Tapping it switches viewport taps to
-    right clicks and changes the label to `R CLICK`; tapping again returns to
-    left-click mode. A physical mouse or pen keeps its own buttons.
+    tapping it slides down a row of square buttons with the card sized to the
+    row plus its padding, and tapping outside the card or waiting about four
+    seconds closes it.
+  - The buttons are square, not a full-width toolbar, and their side is capped
+    at about 18 mm of physical display so an iPad does not get oversized
+    controls. The icon is a little under half the square. Labels are drawn only
+    in a tablet-sized layout, where a readable short name fits under the icon
+    (`EXIT`, `KEYS`, `LOCK`/`LOCKED`, `LEFT`/`RIGHT`); a phone-sized layout stays
+    icon-only.
+  - `L CLICK` starts in left-click mode with the left mouse half filled. Tapping
+    it fills the right half (and changes the label to `RIGHT` where labels are
+    shown); tapping again returns to left-click mode. A physical mouse or pen
+    keeps its own buttons.
 - A tap rotates a tile through SDL's touch-to-mouse bridge, delivered as the
   selected click mode. Touches on a virtual control are consumed before the
   game sees them.

@@ -3,8 +3,9 @@
  * claim on them: when a bar can hold the whole button set, the buttons are
  * drawn there directly and never cover the game.  On a window too close to
  * 4:3 for that, they move to a card that drops down from a small tab at the
- * top; opening it reveals a row of wide buttons across 70% of the window and
- * it closes after a few idle seconds or when the player taps outside it.  The
+ * top; opening it reveals a row of square buttons with the card sized to that
+ * row plus its padding and it closes after a few idle seconds or when the
+ * player taps outside it.  The
  * controls are handled by MainLoopSdl.c after the touch-to-mouse bridge has
  * consumed their events, so they never reach the game's own pointer handling.
  *
@@ -55,6 +56,8 @@ int  NwSdlAndroidToggleRotationLock(void);
 int  NwSdlAndroidRotationLocked(void);
 int  NwSdlAndroidMouseRight(void);
 int  NwSdlAndroidToggleMouseRight(void);
+float NwSdlAndroidUnitsPerDp(void);
+int  NwSdlAndroidTabletLayout(void);
 
 #endif /* __ANDROID__ || NW_PORTABLE_IOS */
 

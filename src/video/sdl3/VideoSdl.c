@@ -40,7 +40,7 @@
 
 #if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
 #include "NwSdlAndroidControls.h"
-#include "NwAndroidIcons.h"
+#include "NwMobileControls.h"
 #endif
 
 /* ---- minimal Win32-compatible vocabulary (no windows.h) ------------------ */
@@ -210,6 +210,11 @@ typedef struct {
     int            pitch;
     int            ready;     /* presentation target usable */
     uint32_t       lut[256];  /* 0xAARRGGBB */
+    /* Converted copy of lut[] for a 32-bit window surface whose byte order is
+     * not ARGB/XRGB (the iOS texture framebuffer can be ABGR).  Rebuilt only
+     * when the surface format changes. */
+    uint32_t       present_lut[256];
+    SDL_PixelFormat present_format;
 } NwSdlVideoState;
 
 static NwSdlVideoState g_v NW_DIAG_BSS;
@@ -680,6 +685,7 @@ NW_DIAG_CODE static void nw_present(int bForce)
         int vw = 0;
         int vh = 0;
         int needScale;
+        int i;
         const SDL_PixelFormatDetails *fmt = NULL;
         const SDL_Palette *pal = NULL;
 
@@ -703,8 +709,34 @@ NW_DIAG_CODE static void nw_present(int bForce)
 
         needScale = (vw != g_v.w || vh != g_v.h);
 
-        if (dst->format == SDL_PIXELFORMAT_ARGB8888 ||
-            dst->format == SDL_PIXELFORMAT_XRGB8888) {
+        if (SDL_BYTESPERPIXEL(dst->format) == 4) {
+            const uint32_t *lut = g_v.lut;
+
+            /* The iOS texture framebuffer can use ABGR8888 rather than
+             * ARGB8888.  Build the byte-order-specific palette once so the
+             * nearest-neighbour copy below stays a plain table lookup even at
+             * native tablet resolution. */
+            if (dst->format != SDL_PIXELFORMAT_ARGB8888 &&
+                dst->format != SDL_PIXELFORMAT_XRGB8888) {
+                if (g_v.present_format != dst->format) {
+                    fmt = SDL_GetPixelFormatDetails(dst->format);
+                    pal = SDL_GetSurfacePalette(dst);
+                    if (fmt == NULL)
+                        return;
+                    for (i = 0; i < 256; i++) {
+                        uint32_t c = g_v.lut[i];
+                        g_v.present_lut[i] = SDL_MapRGBA(
+                            fmt, pal,
+                            (uint8_t)((c >> 16) & 0xff),
+                            (uint8_t)((c >> 8) & 0xff),
+                            (uint8_t)(c & 0xff),
+                            (uint8_t)((c >> 24) & 0xff));
+                    }
+                    g_v.present_format = dst->format;
+                }
+                lut = g_v.present_lut;
+            }
+
             if (!needScale) {
                 /* Fast path used by the normal 4:3 window and by a scale-1
                  * presentation.  It is still a direct palette lookup, so the
@@ -716,7 +748,7 @@ NW_DIAG_CODE static void nw_present(int bForce)
                         (size_t)(vy + y) * (size_t)dst->pitch +
                         (size_t)vx * 4u);
                     for (x = 0; x < vw; x++)
-                        d[x] = g_v.lut[src[x]];
+                        d[x] = lut[src[x]];
                 }
             } else {
                 /* Fixed-point nearest-neighbour sampling into the viewport.
@@ -739,7 +771,7 @@ NW_DIAG_CODE static void nw_present(int bForce)
                     uint32_t sxacc = 0;
 
                     for (x = 0; x < vw; x++) {
-                        d[x] = g_v.lut[src[sxacc >> 16]];
+                        d[x] = lut[src[sxacc >> 16]];
                         sxacc += xstep;
                     }
                     syacc += ystep;
@@ -1034,377 +1066,134 @@ static int nw_boot_font_index(int ch)
 }
 
 #if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
-static Uint32 nw_android_color(SDL_Surface *dst,
-                               Uint8 r, Uint8 g, Uint8 b, Uint8 a)
+/* The button art is one generated PNG atlas compiled into the binary.  SDL's
+ * built-in PNG loader decodes it once; keeping it in memory avoids touching the
+ * package or the writable directory on either platform. */
+static SDL_Surface *nw_mobile_atlas;
+
+static SDL_Surface *nw_mobile_atlas_surface(void)
 {
-    const SDL_PixelFormatDetails *fmt =
-        SDL_GetPixelFormatDetails(dst->format);
-    if (fmt == NULL)
-        return 0;
-    return SDL_MapRGBA(fmt, SDL_GetSurfacePalette(dst), r, g, b, a);
+    SDL_IOStream *io;
+
+    if (nw_mobile_atlas != NULL)
+        return nw_mobile_atlas;
+    io = SDL_IOFromConstMem(nw_mobile_controls_png,
+                            sizeof(nw_mobile_controls_png));
+    if (io == NULL)
+        return NULL;
+    nw_mobile_atlas = SDL_LoadPNG_IO(io, true);
+    if (nw_mobile_atlas == NULL)
+        return NULL;
+    (void)SDL_SetSurfaceBlendMode(nw_mobile_atlas, SDL_BLENDMODE_BLEND);
+    return nw_mobile_atlas;
 }
 
-/* Fill a rectangle with the given color.  When alpha is below 255 the pixels
- * are composited by hand: the window surface is opaque, so the platform would
- * otherwise ignore the alpha channel and paint the control solid. */
-static void nw_android_rect(SDL_Surface *dst, const SDL_Rect *rect,
-                            Uint32 color, Uint8 alpha)
+/* Scale one atlas tile into the button rectangle.  Linear filtering keeps the
+ * rounded border and the label smooth at every button size. */
+static void nw_mobile_tile(int sprite, SDL_Rect *source)
 {
-    const SDL_PixelFormatDetails *fmt;
-    const SDL_Palette *pal;
-    SDL_Rect surfaceClip;
-    SDL_Rect clip;
-    int left;
-    int top;
-    int right;
-    int bottom;
-    Uint8 sr, sg, sb, sa;
-    int x;
-    int y;
-
-    if (dst == NULL || dst->pixels == NULL || rect == NULL)
-        return;
-    if (alpha >= 255) {
-        (void)SDL_FillSurfaceRect(dst, rect, color);
-        return;
-    }
-    if (alpha == 0 || rect->w <= 0 || rect->h <= 0)
-        return;
-
-    fmt = SDL_GetPixelFormatDetails(dst->format);
-    pal = SDL_GetSurfacePalette(dst);
-    if (fmt == NULL)
-        return;
-    SDL_GetRGBA(color, fmt, pal, &sr, &sg, &sb, &sa);
-    (void)sa;
-
-    /* SDL_FillSurfaceRect honors the surface clip rectangle, but the manual
-     * compositing below has to apply it explicitly while the card slides. */
-    left = 0;
-    top = 0;
-    right = dst->w;
-    bottom = dst->h;
-    if (SDL_GetSurfaceClipRect(dst, &surfaceClip)) {
-        left = surfaceClip.x;
-        top = surfaceClip.y;
-        right = surfaceClip.x + surfaceClip.w;
-        bottom = surfaceClip.y + surfaceClip.h;
-    }
-    if (left < 0)
-        left = 0;
-    if (top < 0)
-        top = 0;
-    if (right > dst->w)
-        right = dst->w;
-    if (bottom > dst->h)
-        bottom = dst->h;
-
-    clip.x = rect->x;
-    clip.y = rect->y;
-    clip.w = rect->w;
-    clip.h = rect->h;
-    if (clip.x < left) {
-        clip.w -= left - clip.x;
-        clip.x = left;
-    }
-    if (clip.y < top) {
-        clip.h -= top - clip.y;
-        clip.y = top;
-    }
-    if (clip.x + clip.w > right)
-        clip.w = right - clip.x;
-    if (clip.y + clip.h > bottom)
-        clip.h = bottom - clip.y;
-    if (clip.w <= 0 || clip.h <= 0)
-        return;
-
-    if (fmt->bytes_per_pixel == 4) {
-        if (dst->format == SDL_PIXELFORMAT_ARGB8888 ||
-            dst->format == SDL_PIXELFORMAT_XRGB8888) {
-            for (y = 0; y < clip.h; y++) {
-                Uint32 *row = (Uint32 *)((Uint8 *)dst->pixels +
-                                         (size_t)(clip.y + y) * dst->pitch) +
-                              clip.x;
-                for (x = 0; x < clip.w; x++) {
-                    Uint32 dp = row[x];
-                    Uint32 dr = (dp >> 16) & 0xffu;
-                    Uint32 dg = (dp >> 8) & 0xffu;
-                    Uint32 db = dp & 0xffu;
-                    Uint32 rr = (sr * alpha + dr * (255u - alpha) + 127u) / 255u;
-                    Uint32 gg = (sg * alpha + dg * (255u - alpha) + 127u) / 255u;
-                    Uint32 bb = (sb * alpha + db * (255u - alpha) + 127u) / 255u;
-                    row[x] = (dp & 0xff000000u) | (rr << 16) | (gg << 8) | bb;
-                }
-            }
-            return;
-        }
-        for (y = 0; y < clip.h; y++) {
-            Uint32 *row = (Uint32 *)((Uint8 *)dst->pixels +
-                                     (size_t)(clip.y + y) * dst->pitch) +
-                          clip.x;
-            for (x = 0; x < clip.w; x++) {
-                Uint8 dr, dg, db, da;
-                Uint32 rr, gg, bb;
-                SDL_GetRGBA(row[x], fmt, pal, &dr, &dg, &db, &da);
-                (void)da;
-                rr = (sr * alpha + dr * (255u - alpha) + 127u) / 255u;
-                gg = (sg * alpha + dg * (255u - alpha) + 127u) / 255u;
-                bb = (sb * alpha + db * (255u - alpha) + 127u) / 255u;
-                row[x] = SDL_MapRGBA(fmt, pal, (Uint8)rr, (Uint8)gg,
-                                     (Uint8)bb, 255);
-            }
-        }
-        return;
-    }
-
-    /* Palette surfaces are not used by the mobile window targets; keep the
-     * controls readable instead of blending in palette space. */
-    (void)SDL_FillSurfaceRect(dst, rect, color);
+    source->x = (Sint16)(sprite * NW_MOBILE_ATLAS_TILE);
+    source->y = 0;
+    source->w = NW_MOBILE_ATLAS_TILE;
+    source->h = NW_MOBILE_ATLAS_TILE;
 }
 
-static void nw_android_label(SDL_Surface *dst, const char *text,
-                             const SDL_Rect *area, int scale, Uint32 color,
-                             Uint8 alpha)
+static void nw_mobile_sprite(SDL_Surface *dst, int sprite, const SDL_Rect *area)
 {
-    int length = (int)strlen(text);
-    int width;
-    int height;
-    int x0;
-    int y0;
-    int i;
-    int col;
-    int row;
+    SDL_Surface *atlas = nw_mobile_atlas_surface();
+    SDL_Rect source;
 
-    if (length <= 0 || area == NULL)
+    if (atlas == NULL || area == NULL || area->w <= 0 || area->h <= 0)
         return;
-    if (scale < 1)
-        scale = 1;
-    if (scale > 8)
-        scale = 8;
-    width = length * 6 * scale - scale;
-    while (scale > 1 && width > area->w) {
-        scale--;
-        width = length * 6 * scale - scale;
-    }
-    height = 7 * scale;
-    x0 = area->x + (area->w - width) / 2;
-    y0 = area->y + (area->h - height) / 2;
-
-    for (i = 0; i < length; i++) {
-        int idx = nw_boot_font_index((unsigned char)text[i]);
-        for (col = 0; col < 5; col++) {
-            uint8_t bits = nw_boot_font[idx][col];
-            for (row = 0; row < 7; row++) {
-                SDL_Rect r;
-                if ((bits & (1u << row)) == 0)
-                    continue;
-                r.x = (Sint16)(x0 + (i * 6 + col) * scale);
-                r.y = (Sint16)(y0 + row * scale);
-                r.w = (Sint16)scale;
-                r.h = (Sint16)scale;
-                nw_android_rect(dst, &r, color, alpha);
-            }
-        }
-    }
+    nw_mobile_tile(sprite, &source);
+    (void)SDL_BlitSurfaceScaled(atlas, &source, dst, area,
+                                SDL_SCALEMODE_LINEAR);
 }
 
-enum {
-    NW_ANDROID_DRAW_ICON_EXIT,
-    NW_ANDROID_DRAW_ICON_KEYBOARD,
-    NW_ANDROID_DRAW_ICON_LOCK,
-    NW_ANDROID_DRAW_ICON_UNLOCK,
-    NW_ANDROID_DRAW_ICON_MOUSE_LEFT,
-    NW_ANDROID_DRAW_ICON_MOUSE_RIGHT
-};
-
-static const uint32_t *nw_android_icon_rows(int icon)
+/* Same as nw_mobile_sprite(), with the whole sprite faded so the tab icon can
+ * follow the tab's closed/open opacity. */
+static void nw_mobile_sprite_alpha(SDL_Surface *dst, int sprite,
+                                   const SDL_Rect *area, Uint8 alpha)
 {
-    switch (icon) {
-    case NW_ANDROID_DRAW_ICON_EXIT:
-        return nw_android_icon_exit;
-    case NW_ANDROID_DRAW_ICON_KEYBOARD:
-        return nw_android_icon_keyboard;
-    case NW_ANDROID_DRAW_ICON_UNLOCK:
-        return nw_android_icon_unlock;
-    case NW_ANDROID_DRAW_ICON_MOUSE_LEFT:
-        return nw_android_icon_mouse_left;
-    case NW_ANDROID_DRAW_ICON_MOUSE_RIGHT:
-        return nw_android_icon_mouse_right;
-    case NW_ANDROID_DRAW_ICON_LOCK:
-    default:
-        return nw_android_icon_lock;
-    }
+    SDL_Surface *atlas = nw_mobile_atlas_surface();
+
+    if (atlas == NULL)
+        return;
+    (void)SDL_SetSurfaceAlphaMod(atlas, alpha);
+    nw_mobile_sprite(dst, sprite, area);
+    (void)SDL_SetSurfaceAlphaMod(atlas, 255);
 }
 
-/* Draw a generated 1-bit icon at an integer scale, centered in area.  Drawing
- * runs of set bits keeps the per-frame SDL_FillSurfaceRect count low. */
-static void nw_android_icon(SDL_Surface *dst, int icon,
-                            const SDL_Rect *area, Uint32 color,
-                            Uint8 alpha)
+/* The card and tab are rounded panels.  A 9-grid keeps the border and corner
+ * radius intact while the middle stretches to the layout width. */
+static void nw_mobile_panel(SDL_Surface *dst, int sprite, const SDL_Rect *area)
 {
-    const uint32_t *rows = nw_android_icon_rows(icon);
-    int scale = (area->w < area->h ? area->w : area->h) /
-                NW_ANDROID_ICON_SIZE;
-    int iconW;
-    int iconH;
-    int x0;
-    int y0;
-    int y;
+    SDL_Surface *atlas = nw_mobile_atlas_surface();
+    SDL_Rect source;
+    float scale = NW_MOBILE_PANEL_SCALE;
+    int side;
 
-    if (scale < 1)
-        scale = 1;
-    iconW = NW_ANDROID_ICON_SIZE * scale;
-    iconH = iconW;
-    x0 = area->x + (area->w - iconW) / 2;
-    y0 = area->y + (area->h - iconH) / 2;
-
-    for (y = 0; y < NW_ANDROID_ICON_SIZE; y++) {
-        uint32_t bits = rows[y];
-        int x = 0;
-        while (x < NW_ANDROID_ICON_SIZE) {
-            int run;
-            SDL_Rect r;
-            if ((bits & (1u << x)) == 0) {
-                x++;
-                continue;
-            }
-            run = x;
-            while (x < NW_ANDROID_ICON_SIZE && (bits & (1u << x)) != 0)
-                x++;
-            r.x = (Sint16)(x0 + run * scale);
-            r.y = (Sint16)(y0 + y * scale);
-            r.w = (Sint16)((x - run) * scale);
-            r.h = (Sint16)scale;
-            nw_android_rect(dst, &r, color, alpha);
-        }
+    if (atlas == NULL || area == NULL || area->w <= 0 || area->h <= 0)
+        return;
+    side = area->w < area->h ? area->w : area->h;
+    if (side - 4 < 2 * NW_MOBILE_PANEL_INSET * scale) {
+        float fit = (float)(side - 4) /
+                    (float)(2 * NW_MOBILE_PANEL_INSET);
+        if (fit < scale)
+            scale = fit;
     }
+    if (scale <= 0.0f)
+        return;
+    nw_mobile_tile(sprite, &source);
+    (void)SDL_BlitSurface9Grid(atlas, &source,
+                               NW_MOBILE_PANEL_INSET, NW_MOBILE_PANEL_INSET,
+                               NW_MOBILE_PANEL_INSET, NW_MOBILE_PANEL_INSET,
+                               scale, SDL_SCALEMODE_LINEAR, dst, area);
 }
 
-/* Small triangle/chevron used by the pull-down tab. */
-static void nw_android_chevron(SDL_Surface *dst, const SDL_Rect *handle,
-                               int up, Uint32 color, Uint8 alpha)
-{
-    static const uint8_t downRows[4] = { 0xffu, 0x7eu, 0x3cu, 0x18u };
-    static const uint8_t upRows[4] = { 0x18u, 0x3cu, 0x7eu, 0xffu };
-    const uint8_t *rows = up ? upRows : downRows;
-    int scale = (handle->h - 8) / 8;
-    int iconW;
-    int iconH;
-    int x0;
-    int y0;
-    int y;
-
-    if (scale < 1)
-        scale = 1;
-    if (scale > 3)
-        scale = 3;
-    iconW = 8 * scale;
-    iconH = 4 * scale;
-    x0 = handle->x + (handle->w - iconW) / 2;
-    y0 = handle->y + (handle->h - iconH) / 2;
-
-    for (y = 0; y < 4; y++) {
-        uint8_t bits = rows[y];
-        int x = 0;
-        while (x < 8) {
-            int run;
-            SDL_Rect r;
-            if ((bits & (1u << x)) == 0) {
-                x++;
-                continue;
-            }
-            run = x;
-            while (x < 8 && (bits & (1u << x)) != 0)
-                x++;
-            r.x = (Sint16)(x0 + run * scale);
-            r.y = (Sint16)(y0 + y * scale);
-            r.w = (Sint16)((x - run) * scale);
-            r.h = (Sint16)scale;
-            nw_android_rect(dst, &r, color, alpha);
-        }
-    }
-}
-
-/* Draw the control buttons themselves, independent of whether they sit in a
- * letterbox bar or on the pull-down card. */
+/* The buttons are pre-rendered images, so the only runtime choice is the
+ * compact or labelled variant.  Tablets get the label; phone-sized layouts
+ * keep the larger icon with no text. */
 static void nw_android_draw_buttons(SDL_Surface *dst, const SDL_Rect *buttons,
-                                    const char *const *labels,
-                                    const int *icons, int pressed)
+                                    const int *sprites, int pressed)
 {
+    int labelled = NwSdlAndroidTabletLayout();
     int i;
 
     for (i = 0; i < NW_ANDROID_CONTROL_COUNT; i++) {
-        SDL_Rect outer = buttons[i];
-        SDL_Rect innerButton;
-        SDL_Rect iconArea;
-        int buttonBorder = (outer.w < outer.h ? outer.w : outer.h) / 24;
-        int margin;
-        int labelScale;
-        int maxLabelScale;
-        int labelHeight;
-        int labelW;
-        int showLabel;
-        Uint32 fill;
-        Uint32 borderColor;
-        Uint32 text;
+        int sprite = sprites[i];
 
-        if (buttonBorder < 2)
-            buttonBorder = 2;
-        if (buttonBorder > 6)
-            buttonBorder = 6;
-
-        if (pressed == i + 1) {
-            borderColor = nw_android_color(dst, 150, 238, 212, 255);
-            fill = nw_android_color(dst, 38, 104, 88, 255);
-            text = nw_android_color(dst, 255, 255, 255, 255);
-        } else {
-            borderColor = nw_android_color(dst, 68, 194, 168, 255);
-            fill = nw_android_color(dst, 24, 45, 52, 255);
-            text = nw_android_color(dst, 234, 244, 240, 255);
-        }
-        nw_android_rect(dst, &outer, borderColor, 255);
-        innerButton = outer;
-        innerButton.x = (Sint16)(innerButton.x + buttonBorder);
-        innerButton.y = (Sint16)(innerButton.y + buttonBorder);
-        innerButton.w = (Sint16)(innerButton.w - buttonBorder * 2);
-        innerButton.h = (Sint16)(innerButton.h - buttonBorder * 2);
-        if (innerButton.w > 0 && innerButton.h > 0)
-            nw_android_rect(dst, &innerButton, fill, 255);
-
-        margin = (outer.w < outer.h ? outer.w : outer.h) / 16;
-        if (margin < 3)
-            margin = 3;
-        if (margin > 10)
-            margin = 10;
-        labelW = (int)strlen(labels[i]) * 6 - 1;
-        showLabel = outer.h >= 42 && outer.w - margin * 2 >= labelW;
-        labelScale = outer.h / 48;
-        if (labelScale < 1)
-            labelScale = 1;
-        maxLabelScale = (outer.w - margin * 2) / labelW;
-        if (maxLabelScale < 1)
-            maxLabelScale = 1;
-        if (labelScale > maxLabelScale)
-            labelScale = maxLabelScale;
-        labelHeight = 7 * labelScale;
-
-        iconArea.x = (Sint16)(outer.x + margin);
-        iconArea.y = (Sint16)(outer.y + margin);
-        iconArea.w = (Sint16)(outer.w - margin * 2);
-        iconArea.h = (Sint16)(outer.h - margin * 2);
-        if (showLabel) {
-            SDL_Rect labelArea;
-            labelArea.x = (Sint16)(outer.x + margin);
-            labelArea.y = (Sint16)(outer.y + outer.h - margin - labelHeight);
-            labelArea.w = (Sint16)(outer.w - margin * 2);
-            labelArea.h = (Sint16)labelHeight;
-            iconArea.h = (Sint16)(iconArea.h - labelHeight - margin);
-            nw_android_label(dst, labels[i], &labelArea, labelScale,
-                             text, 255);
-        }
-        if (iconArea.w > 0 && iconArea.h > 0)
-            nw_android_icon(dst, icons[i], &iconArea, text, 255);
+        if (labelled)
+            sprite += NW_MOBILE_SPRITE_FULL_OFFSET;
+        nw_mobile_sprite(dst, sprite, &buttons[i]);
+        if (pressed == i + 1)
+            nw_mobile_sprite(dst, NW_MOBILE_SPRITE_PRESSED, &buttons[i]);
     }
+}
+
+/* SDL pointer coordinates and the control layout are in window points.  The
+ * iOS window surface is native-resolution, so scale the rectangles only when
+ * drawing; hit testing keeps using the point coordinates from the events. */
+static float nw_mobile_draw_scale(SDL_Surface *dst)
+{
+    int ww = 0;
+    int wh = 0;
+
+    if (g_nwSdlWindow == NULL)
+        return 1.0f;
+    if (!SDL_GetWindowSize(g_nwSdlWindow, &ww, &wh) || ww <= 0 || wh <= 0)
+        return 1.0f;
+    if (dst->w <= 0)
+        return 1.0f;
+    return (float)dst->w / (float)ww;
+}
+
+static void nw_mobile_scale_rect(SDL_Rect *rect, float scale)
+{
+    rect->x = (Sint16)(rect->x * scale + 0.5f);
+    rect->y = (Sint16)(rect->y * scale + 0.5f);
+    rect->w = (Sint16)(rect->w * scale + 0.5f);
+    rect->h = (Sint16)(rect->h * scale + 0.5f);
 }
 
 NW_DIAG_CODE static void nw_draw_android_controls(SDL_Surface *dst)
@@ -1412,75 +1201,65 @@ NW_DIAG_CODE static void nw_draw_android_controls(SDL_Surface *dst)
     SDL_Rect buttons[NW_ANDROID_CONTROL_COUNT];
     SDL_Rect handle;
     SDL_Rect card;
-    const char *labels[NW_ANDROID_CONTROL_COUNT] = {
-        "EXIT", "KEYBOARD", "LOCK", "L CLICK"
+    int sprites[NW_ANDROID_CONTROL_COUNT] = {
+        NW_MOBILE_SPRITE_EXIT,
+        NW_MOBILE_SPRITE_KEYS,
+        NW_MOBILE_SPRITE_LOCK,
+        NW_MOBILE_SPRITE_LEFT
     };
-    int icons[NW_ANDROID_CONTROL_COUNT] = {
-        NW_ANDROID_DRAW_ICON_EXIT,
-        NW_ANDROID_DRAW_ICON_KEYBOARD,
-        NW_ANDROID_DRAW_ICON_LOCK,
-        NW_ANDROID_DRAW_ICON_MOUSE_LEFT
-    };
+    float drawScale = nw_mobile_draw_scale(dst);
     int pressed = NwSdlAndroidControlPressed();
     int progress;
     int inBar;
+    int i;
 
-    if (NwSdlAndroidRotationLocked()) {
-        labels[NW_ANDROID_CONTROL_LOCK - 1] = "UNLOCK";
-        icons[NW_ANDROID_CONTROL_LOCK - 1] = NW_ANDROID_DRAW_ICON_UNLOCK;
-    }
-    if (NwSdlAndroidMouseRight()) {
-        labels[NW_ANDROID_CONTROL_CLICK - 1] = "R CLICK";
-        icons[NW_ANDROID_CONTROL_CLICK - 1] = NW_ANDROID_DRAW_ICON_MOUSE_RIGHT;
-    }
+    if (drawScale <= 0.0f)
+        drawScale = 1.0f;
+
+    if (NwSdlAndroidRotationLocked())
+        sprites[NW_ANDROID_CONTROL_LOCK - 1] = NW_MOBILE_SPRITE_LOCKED;
+    if (NwSdlAndroidMouseRight())
+        sprites[NW_ANDROID_CONTROL_CLICK - 1] = NW_MOBILE_SPRITE_RIGHT;
 
     if (!NwSdlAndroidControlLayout(buttons))
         return;
+    if (drawScale != 1.0f) {
+        for (i = 0; i < NW_ANDROID_CONTROL_COUNT; i++)
+            nw_mobile_scale_rect(&buttons[i], drawScale);
+    }
 
     /* Controls that fit entirely in the black bars are always visible, so they
      * are drawn straight with no tab or card. */
     inBar = NwSdlAndroidControlsInBar();
     if (inBar) {
-        nw_android_draw_buttons(dst, buttons, labels, icons, pressed);
+        nw_android_draw_buttons(dst, buttons, sprites, pressed);
         return;
     }
 
     if (!NwSdlAndroidControlCardLayout(&handle, &card))
         return;
+    if (drawScale != 1.0f) {
+        nw_mobile_scale_rect(&handle, drawScale);
+        nw_mobile_scale_rect(&card, drawScale);
+    }
 
     progress = NwSdlAndroidControlCardProgress();
 
     if (progress > 0) {
         SDL_Rect oldClip;
         SDL_Rect clip;
-        SDL_Rect inner;
         int haveClip = SDL_GetSurfaceClipRect(dst, &oldClip);
         int visibleH = card.h * progress /
                        NW_SDL_CARD_PROGRESS_FULL;
-        int border = (card.w < card.h ? card.w : card.h) / 24;
-        Uint32 cardBorder = nw_android_color(dst, 68, 194, 168, 255);
-        Uint32 cardFill = nw_android_color(dst, 15, 30, 37, 255);
 
-        if (border < 2)
-            border = 2;
-        if (border > 4)
-            border = 4;
         if (visibleH <= 0)
             visibleH = 1;
 
         clip = card;
         clip.h = (Sint16)visibleH;
         (void)SDL_SetSurfaceClipRect(dst, &clip);
-        nw_android_rect(dst, &card, cardBorder, 235);
-        inner = card;
-        inner.x = (Sint16)(inner.x + border);
-        inner.y = (Sint16)(inner.y + border);
-        inner.w = (Sint16)(inner.w - border * 2);
-        inner.h = (Sint16)(inner.h - border * 2);
-        if (inner.w > 0 && inner.h > 0)
-            nw_android_rect(dst, &inner, cardFill, 225);
-
-        nw_android_draw_buttons(dst, buttons, labels, icons, pressed);
+        nw_mobile_panel(dst, NW_MOBILE_SPRITE_CARD, &card);
+        nw_android_draw_buttons(dst, buttons, sprites, pressed);
 
         if (haveClip)
             (void)SDL_SetSurfaceClipRect(dst, &oldClip);
@@ -1489,26 +1268,23 @@ NW_DIAG_CODE static void nw_draw_android_controls(SDL_Surface *dst)
     }
 
     {
-        SDL_Rect inner;
-        int border = (handle.w < handle.h ? handle.w : handle.h) / 10;
-        Uint8 alpha = progress > 0 ? 245 : 215;
-        Uint32 borderColor = nw_android_color(dst, 68, 194, 168, 255);
-        Uint32 fill = nw_android_color(dst, 15, 30, 37, 255);
-        Uint32 text = nw_android_color(dst, 150, 238, 212, 255);
+        SDL_Rect chevron;
+        int side = handle.h * 3 / 2;
 
-        if (border < 2)
-            border = 2;
-        if (border > 4)
-            border = 4;
-        nw_android_rect(dst, &handle, borderColor, alpha);
-        inner = handle;
-        inner.x = (Sint16)(inner.x + border);
-        inner.y = (Sint16)(inner.y + border);
-        inner.w = (Sint16)(inner.w - border * 2);
-        inner.h = (Sint16)(inner.h - border * 2);
-        if (inner.w > 0 && inner.h > 0)
-            nw_android_rect(dst, &inner, fill, alpha);
-        nw_android_chevron(dst, &handle, progress > 0, text, alpha);
+        if (side < 12)
+            side = 12;
+        chevron.x = (Sint16)(handle.x + (handle.w - side) / 2);
+        chevron.y = (Sint16)(handle.y + (handle.h - side) / 2);
+        chevron.w = (Sint16)side;
+        chevron.h = (Sint16)side;
+        nw_mobile_panel(dst, progress > 0 ? NW_MOBILE_SPRITE_HANDLE_HOT
+                                          : NW_MOBILE_SPRITE_HANDLE,
+                        &handle);
+        nw_mobile_sprite_alpha(
+            dst,
+            progress > 0 ? NW_MOBILE_SPRITE_CHEVRON_UP
+                         : NW_MOBILE_SPRITE_CHEVRON_DOWN,
+            &chevron, progress > 0 ? 245 : 215);
     }
 }
 #endif

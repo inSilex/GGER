@@ -312,6 +312,40 @@ show the transparent background. Android's adaptive icon supplies its own
 is fitted inside the 66 dp safe-zone circle so launcher masks do not crop the
 monitor. Legacy square and round launcher icons keep their keyline padding too.
 
+### On-screen control artwork
+
+The Android and iOS touch controls are also generated artwork rather than
+runtime rectangles. The sprites for the buttons (compact and labelled, plus
+pressed and active states), the pull-down card and tab panels, and the two
+card chevrons are packed into one PNG atlas by
+`tools/gen_mobile_controls.py`. The atlas is embedded in the binary as
+`src/include/NwMobileControls.h`, so the packages need no extra image files and
+the platforms do not need an external image library: SDL's built-in PNG loader
+decodes it once at startup. Tiles are 512 pixels square and are filtered down to
+the physical button size, which keeps the icons, labels, borders, and the tab
+crisp on high-density tablets. The iOS window is created with
+`SDL_WINDOW_HIGH_PIXEL_DENSITY`, so its surface is native-resolution; the
+control layout still uses points and `VideoSdl.c` scales only the control
+rectangles when drawing.
+
+Regenerate the header after changing a shape, a label, or a colour:
+
+```sh
+python3 tools/gen_mobile_controls.py
+```
+
+The script needs Pillow; inside the project image run it with
+
+```sh
+docker run --rm -v "$PWD:/src" -w /src --entrypoint python3 \
+    netwalk-build:latest tools/gen_mobile_controls.py
+```
+
+The buttons and labels are pre-rendered in the atlas, so the only runtime
+choice is the compact or labelled tile. The card and tab reuse a rounded panel
+tile through a 9-grid blit, which stretches their middle without distorting the
+border or corners, and the chevrons are ordinary tiles.
+
 For native-only debugging without Gradle, configure the NDK toolchain directly:
 
 ```sh
@@ -433,7 +467,10 @@ orientations and `UIRequiresFullScreen`; `main()` does not override
 chose at launch. Presentation fits the fixed 4:3 canvas into the real window
 and centers the letterbox bars. The same four on-screen controls as the
 Android package are `EXIT`, `KEYBOARD`, `LOCK`/`UNLOCK`, and
-`L CLICK`/`R CLICK`. They are drawn directly in the letterbox bars when the
+`L CLICK`/`R CLICK`. The square side is capped at about 18 mm of physical
+display, and a tablet draws short names under the icons (`EXIT`, `KEYS`,
+`LOCK`/`LOCKED`, `LEFT`/`RIGHT`) while a phone stays icon-only. They are drawn
+directly in the letterbox bars when the
 bars are large enough; a near-4:3 window instead uses the pull-down card. The
 game does not write a run log or crash file; startup errors alone reach the
 unified log through `SDL_Log`.
@@ -469,9 +506,9 @@ the Android package: `EXIT`, `KEYBOARD`, `LOCK`/`UNLOCK`, and
 drawn directly in the bars (a row in the bottom or top bar in portrait, two
 stacked buttons per side bar in wide landscape) and never cover the game. A
 near-4:3 window falls back to the pull-down card: only a small top tab is
-visible, and tapping it slides down a row of wide buttons across 70% of the
-screen. Tapping outside the card or leaving it idle for about four seconds
-closes it again. The software keyboard stays hidden until `KEYBOARD` is tapped;
+visible, and tapping it slides down a row of square buttons with the card sized
+to that row plus its padding. Tapping outside the card or leaving it idle for
+about four seconds closes it again. The software keyboard stays hidden until `KEYBOARD` is tapped;
 tapping anywhere outside the keyboard in the game window dismisses it. `LOCK`
 pins the current display orientation, including blocking a 180-degree turn.
 

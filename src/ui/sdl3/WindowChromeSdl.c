@@ -344,9 +344,11 @@ NW_SDL_CODE static void nw_window_metrics_size(int *pw, int *ph)
     if (g_nwSdlWindow != NULL) {
         (void)SDL_GetWindowSize(g_nwSdlWindow, &w, &h);
 #if defined(NW_PORTABLE_IOS)
-        /* The window surface is allocated from the view bounds in points.  If
-         * high pixel density were enabled the pixel size would be in a
-         * different unit than SDL's pointer coordinates, so leave it alone. */
+        /* Controls and pointer events use points.  With high pixel density the
+         * window surface is larger than the window in points, so keep the
+         * point size here; the control drawing path scales its rectangles to
+         * surface pixels at draw time.  Without the flag the pixel size is the
+         * same as the window size, and this keeps older builds working. */
         if (!(SDL_GetWindowFlags(g_nwSdlWindow) &
               SDL_WINDOW_HIGH_PIXEL_DENSITY)) {
             int lw = 0;
@@ -405,11 +407,11 @@ static char g_nwSdlIosRotationMask[32] NW_SDL_BSS;
  * enough.  Only when the window is too close to 4:3 do they move to a card
  * that drops down from a small tab at the top of the window.  The tab is the
  * only thing visible while the card is closed, so play stays unobstructed.
- * Opening the card reveals a row of wide buttons across 70% of the window; it
- * closes again after a few idle seconds or when the player taps outside it. */
+ * Opening the card reveals a row of square buttons with the panel hugging that
+ * row and its padding; it closes again after a few idle seconds or when the
+ * player taps outside it. */
 #define NW_SDL_CARD_SLIDE_MS 180u
 #define NW_SDL_CARD_HOLD_MS  4000u
-#define NW_SDL_CARD_WIDTH_PCT 70
 
 static int nw_android_card_progress_now(void)
 {
@@ -441,6 +443,119 @@ NW_SDL_CODE static int nw_android_min(int a, int b)
 }
 
 #if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+/* Square side for one control.  One fifth of the short window dimension keeps
+ * the controls proportionate on a phone, while the absolute ceiling in
+ * millimetres stops a large tablet from turning them into slabs.  A phone's
+ * portrait row lands just under 15 mm, so the ceiling sits slightly above that:
+ * a tablet gets the same kind of button, not a bigger one.  Every layout uses
+ * the same side, so a wide letterbox bar gets square buttons instead of a
+ * strip stretched across it, and the pull-down card shows the same square. */
+#define NW_SDL_BUTTON_MIN 48
+#define NW_SDL_BUTTON_MAX_MM 18.0f
+#define NW_SDL_COLUMN_MAX_DP 64
+#define NW_SDL_TABLET_MIN_DP 600
+
+/* Window units per density-independent pixel.  Android windows use pixels, so
+ * this is the display density; iOS windows use points, so it is 1.  Returning
+ * zero means the platform has not reported a usable density and callers should
+ * skip absolute caps rather than collapsing the controls. */
+NW_SDL_CODE float NwSdlAndroidUnitsPerDp(void)
+{
+    float scale;
+    float density;
+
+    if (g_nwSdlWindow == NULL)
+        return 0.0f;
+    scale = SDL_GetWindowDisplayScale(g_nwSdlWindow);
+    density = SDL_GetWindowPixelDensity(g_nwSdlWindow);
+    if (scale < 1.0f)
+        scale = 1.0f;
+    if (density < 1.0f)
+        density = 1.0f;
+#if defined(__ANDROID__)
+    if (scale < 1.5f)
+        return 0.0f;
+#endif
+    return scale / density;
+}
+
+static int nw_android_dp_units(int dp)
+{
+    float units = NwSdlAndroidUnitsPerDp();
+
+    if (units <= 0.0f)
+        return 0;
+    return (int)(dp * units + 0.5f);
+}
+
+/* Window units per millimetre of display.  Android dp are exactly 1/160 inch.
+ * SDL 3 has no physical-size query for iOS, so points are converted with the
+ * 264 ppi panel used by most current iPads (132 points per inch).  iPhones
+ * never reach the ceiling, so the approximation only affects tablets, and an
+ * iPad mini, whose points are denser, ends up slightly smaller rather than
+ * larger. */
+static float nw_android_units_per_mm(void)
+{
+    float units = NwSdlAndroidUnitsPerDp();
+
+    if (units <= 0.0f)
+        return 0.0f;
+#if defined(__ANDROID__)
+    return units * 160.0f / 25.4f;
+#else
+    return units * 132.0f / 25.4f;
+#endif
+}
+
+static int nw_android_mm_units(float mm)
+{
+    float units = nw_android_units_per_mm();
+
+    if (units <= 0.0f)
+        return 0;
+    return (int)(mm * units + 0.5f);
+}
+
+static int nw_android_control_side(int ww, int wh)
+{
+    int side = nw_android_min(ww, wh) / 5;
+    int cap = nw_android_mm_units(NW_SDL_BUTTON_MAX_MM);
+
+    if (cap > 0 && side > cap)
+        side = cap;
+    if (side < NW_SDL_BUTTON_MIN)
+        side = NW_SDL_BUTTON_MIN;
+    return side;
+}
+
+/* Tablets are recognised by the short side in density-independent units, never
+ * by the platform name: an iPad and a large Android tablet take this branch,
+ * and an iPhone matches an Android phone.  VideoSdl.c uses it to decide whether
+ * there is room for a readable label under the icon. */
+NW_SDL_CODE int NwSdlAndroidTabletLayout(void)
+{
+    float units = NwSdlAndroidUnitsPerDp();
+    int ww = 0;
+    int wh = 0;
+
+    if (units <= 0.0f || g_nwSdlWindow == NULL)
+        return 0;
+    nw_window_metrics_size(&ww, &wh);
+    if (ww <= 0 || wh <= 0)
+        return 0;
+    return nw_android_min(ww, wh) / units >= NW_SDL_TABLET_MIN_DP;
+}
+
+/* The side bars stack two controls per column, so a phone needs a tighter
+ * absolute cap than a tablet.  Tablets keep the full square, which also gives
+ * the label room to be read. */
+static int nw_android_column_side_cap(void)
+{
+    if (NwSdlAndroidTabletLayout())
+        return nw_android_mm_units(NW_SDL_BUTTON_MAX_MM);
+    return nw_android_dp_units(NW_SDL_COLUMN_MAX_DP);
+}
+
 /* Try to place the whole control set inside the letterbox bars so the game
  * view stays fully visible.  Returns 1 for a single row in the top or bottom
  * bar, 2 for two stacked columns in the side bars, and 0 when the window is
@@ -455,74 +570,71 @@ static int nw_android_bar_metrics(const SDL_Rect *safe, int ww, int wh,
     int bandTop;
     int bandBottom;
     int bandHeight;
-    int buttonW;
-    int buttonH;
+    int side;
+    int rowSide;
     int rowW;
     int rowH;
     int rowX;
     int rowY;
+    int groupW;
     int colH;
     int colY;
     int i;
 
     NwSdlWindowViewport(&vx, &vy, &vw, &vh);
+    side = nw_android_control_side(ww, wh);
 
-    /* A horizontal row across the top or bottom bar, matching the card width
-     * and button proportions. */
-    rowW = ww * NW_SDL_CARD_WIDTH_PCT / 100;
-    if (rowW > safe->w - 8)
-        rowW = safe->w - 8;
-    if (rowW >= 160) {
-        buttonW = (rowW - pad * 2 -
-                   gap * (NW_ANDROID_CONTROL_COUNT - 1)) /
-                  NW_ANDROID_CONTROL_COUNT;
-        if (buttonW >= 28) {
-            buttonH = buttonW * 7 / 10;
-            if (buttonH < 44)
-                buttonH = 44;
-            if (buttonH > 64)
-                buttonH = 64;
-            rowH = buttonH + pad * 2;
-            rowX = safe->x + (safe->w - rowW) / 2;
+    /* A centered row of four square buttons in the top or bottom bar.  The
+     * pull-down card hugs its button row; a bar row may use the whole safe
+     * width, which lets portrait phones get the same large squares as the side
+     * bars. */
+    rowW = safe->w - pad * 2;
+    rowSide = (rowW - pad * 2 -
+               gap * (NW_ANDROID_CONTROL_COUNT - 1)) /
+              NW_ANDROID_CONTROL_COUNT;
+    if (rowSide > side)
+        rowSide = side;
+    if (rowSide >= NW_SDL_BUTTON_MIN) {
+        groupW = rowSide * NW_ANDROID_CONTROL_COUNT +
+                 gap * (NW_ANDROID_CONTROL_COUNT - 1);
+        rowH = rowSide + pad * 2;
+        rowX = safe->x + (safe->w - groupW) / 2;
 
-            /* Prefer the bottom bar, which sits near the player's thumbs. */
-            bandTop = vy + vh;
-            if (bandTop < safe->y)
-                bandTop = safe->y;
-            bandBottom = safe->y + safe->h;
-            if (bandBottom > wh)
-                bandBottom = wh;
-            bandHeight = bandBottom - bandTop;
-            if (bandTop >= vy + vh && bandHeight >= rowH + 4) {
-                rowY = bandTop + (bandHeight - rowH) / 2;
-                for (i = 0; i < NW_ANDROID_CONTROL_COUNT; i++) {
-                    pButtons[i].x = (Sint16)(rowX + pad +
-                                             i * (buttonW + gap));
-                    pButtons[i].y = (Sint16)(rowY + pad);
-                    pButtons[i].w = (Sint16)buttonW;
-                    pButtons[i].h = (Sint16)buttonH;
-                }
-                return 1;
-            }
-
+        /* Prefer the bottom bar, which sits near the player's thumbs. */
+        bandTop = vy + vh;
+        if (bandTop < safe->y)
             bandTop = safe->y;
-            if (bandTop < 0)
-                bandTop = 0;
-            bandBottom = vy;
-            if (bandBottom > safe->y + safe->h)
-                bandBottom = safe->y + safe->h;
-            bandHeight = bandBottom - bandTop;
-            if (bandBottom <= vy && bandHeight >= rowH + 4) {
-                rowY = bandTop + (bandHeight - rowH) / 2;
-                for (i = 0; i < NW_ANDROID_CONTROL_COUNT; i++) {
-                    pButtons[i].x = (Sint16)(rowX + pad +
-                                             i * (buttonW + gap));
-                    pButtons[i].y = (Sint16)(rowY + pad);
-                    pButtons[i].w = (Sint16)buttonW;
-                    pButtons[i].h = (Sint16)buttonH;
-                }
-                return 1;
+        bandBottom = safe->y + safe->h;
+        if (bandBottom > wh)
+            bandBottom = wh;
+        bandHeight = bandBottom - bandTop;
+        if (bandTop >= vy + vh && bandHeight >= rowH + 4) {
+            rowY = bandTop + (bandHeight - rowH) / 2;
+            for (i = 0; i < NW_ANDROID_CONTROL_COUNT; i++) {
+                pButtons[i].x = (Sint16)(rowX + i * (rowSide + gap));
+                pButtons[i].y = (Sint16)(rowY + pad);
+                pButtons[i].w = (Sint16)rowSide;
+                pButtons[i].h = (Sint16)rowSide;
             }
+            return 1;
+        }
+
+        bandTop = safe->y;
+        if (bandTop < 0)
+            bandTop = 0;
+        bandBottom = vy;
+        if (bandBottom > safe->y + safe->h)
+            bandBottom = safe->y + safe->h;
+        bandHeight = bandBottom - bandTop;
+        if (bandBottom <= vy && bandHeight >= rowH + 4) {
+            rowY = bandTop + (bandHeight - rowH) / 2;
+            for (i = 0; i < NW_ANDROID_CONTROL_COUNT; i++) {
+                pButtons[i].x = (Sint16)(rowX + i * (rowSide + gap));
+                pButtons[i].y = (Sint16)(rowY + pad);
+                pButtons[i].w = (Sint16)rowSide;
+                pButtons[i].h = (Sint16)rowSide;
+            }
+            return 1;
         }
     }
 
@@ -540,6 +652,8 @@ static int nw_android_bar_metrics(const SDL_Rect *safe, int ww, int wh,
         int barW;
         int leftX;
         int rightX;
+        int columnSide;
+        int columnCap;
 
         if (leftBarL < safe->x)
             leftBarL = safe->x;
@@ -553,14 +667,14 @@ static int nw_android_bar_metrics(const SDL_Rect *safe, int ww, int wh,
         rightW = rightBarR - rightBarL;
         barW = leftW < rightW ? leftW : rightW;
 
-        buttonW = barW - pad * 2;
-        if (buttonW >= 40) {
-            buttonH = buttonW * 7 / 10;
-            if (buttonH < 44)
-                buttonH = 44;
-            if (buttonH > 64)
-                buttonH = 64;
-            colH = buttonH * 2 + gap + pad * 2;
+        columnSide = side;
+        columnCap = nw_android_column_side_cap();
+        if (columnCap > 0 && columnSide > columnCap)
+            columnSide = columnCap;
+        if (columnSide > barW - pad * 2)
+            columnSide = barW - pad * 2;
+        if (columnSide >= NW_SDL_BUTTON_MIN) {
+            colH = columnSide * 2 + gap + pad * 2;
             bandTop = safe->y;
             if (bandTop < 0)
                 bandTop = 0;
@@ -570,24 +684,24 @@ static int nw_android_bar_metrics(const SDL_Rect *safe, int ww, int wh,
             bandHeight = bandBottom - bandTop;
             if (bandHeight >= colH + 4) {
                 colY = bandTop + (bandHeight - colH) / 2;
-                leftX = leftBarL + (leftW - buttonW) / 2;
-                rightX = rightBarL + (rightW - buttonW) / 2;
+                leftX = leftBarL + (leftW - columnSide) / 2;
+                rightX = rightBarL + (rightW - columnSide) / 2;
                 pButtons[0].x = (Sint16)leftX;
                 pButtons[0].y = (Sint16)(colY + pad);
-                pButtons[0].w = (Sint16)buttonW;
-                pButtons[0].h = (Sint16)buttonH;
+                pButtons[0].w = (Sint16)columnSide;
+                pButtons[0].h = (Sint16)columnSide;
                 pButtons[1].x = (Sint16)leftX;
-                pButtons[1].y = (Sint16)(colY + pad + buttonH + gap);
-                pButtons[1].w = (Sint16)buttonW;
-                pButtons[1].h = (Sint16)buttonH;
+                pButtons[1].y = (Sint16)(colY + pad + columnSide + gap);
+                pButtons[1].w = (Sint16)columnSide;
+                pButtons[1].h = (Sint16)columnSide;
                 pButtons[2].x = (Sint16)rightX;
                 pButtons[2].y = (Sint16)(colY + pad);
-                pButtons[2].w = (Sint16)buttonW;
-                pButtons[2].h = (Sint16)buttonH;
+                pButtons[2].w = (Sint16)columnSide;
+                pButtons[2].h = (Sint16)columnSide;
                 pButtons[3].x = (Sint16)rightX;
-                pButtons[3].y = (Sint16)(colY + pad + buttonH + gap);
-                pButtons[3].w = (Sint16)buttonW;
-                pButtons[3].h = (Sint16)buttonH;
+                pButtons[3].y = (Sint16)(colY + pad + columnSide + gap);
+                pButtons[3].w = (Sint16)columnSide;
+                pButtons[3].h = (Sint16)columnSide;
                 return 2;
             }
         }
@@ -627,6 +741,7 @@ NW_SDL_CODE static int nw_android_metrics(SDL_Rect *pHandle, SDL_Rect *pCard,
     int gap;
     int avail;
     int buttonW;
+    int buttonX0;
     int buttonH;
     int i;
 
@@ -671,20 +786,24 @@ NW_SDL_CODE static int nw_android_metrics(SDL_Rect *pHandle, SDL_Rect *pCard,
     }
 
     unit = nw_android_min(ww, wh);
-    cardW = ww * NW_SDL_CARD_WIDTH_PCT / 100;
-    if (cardW > safe.w - 8)
-        cardW = safe.w - 8;
 
-    pad = cardW / 48;
-    if (pad < 8)
-        pad = 8;
-    if (pad > 18)
-        pad = 18;
-    gap = cardW / 64;
-    if (gap < 6)
-        gap = 6;
-    if (gap > 12)
-        gap = 12;
+    /* Breathing room scales with the square control side, so the margin and
+     * inter-button gap stay proportionate whether the controls sit in a wide
+     * side bar or the card. */
+    {
+        int side = nw_android_control_side(ww, wh);
+
+        pad = side / 4;
+        if (pad < 10)
+            pad = 10;
+        if (pad > 40)
+            pad = 40;
+        gap = side / 6;
+        if (gap < 8)
+            gap = 8;
+        if (gap > 32)
+            gap = 32;
+    }
 
     /* Controls that fit entirely inside a black bar never cover the game, so
      * they are drawn directly with no tab or sliding card. */
@@ -694,8 +813,19 @@ NW_SDL_CODE static int nw_android_metrics(SDL_Rect *pHandle, SDL_Rect *pCard,
         return 1;
     }
 
-    if (cardW < 160)
+    /* The card hugs the button row with the same padding instead of spanning a
+     * fixed part of the window.  If the safe area is too narrow for four
+     * touch-sized squares, the card is not usable and the caller falls back to
+     * the bar layout. */
+    buttonW = nw_android_control_side(ww, wh);
+    avail = safe.w - 8 - pad * 2 -
+            gap * (NW_ANDROID_CONTROL_COUNT - 1);
+    if (avail < NW_ANDROID_CONTROL_COUNT * NW_SDL_BUTTON_MIN)
         return 0;
+    if (buttonW > avail / NW_ANDROID_CONTROL_COUNT)
+        buttonW = avail / NW_ANDROID_CONTROL_COUNT;
+    cardW = pad * 2 + buttonW * NW_ANDROID_CONTROL_COUNT +
+            gap * (NW_ANDROID_CONTROL_COUNT - 1);
     cardX = safe.x + (safe.w - cardW) / 2;
 
     handleH = unit / 16;
@@ -715,15 +845,8 @@ NW_SDL_CODE static int nw_android_metrics(SDL_Rect *pHandle, SDL_Rect *pCard,
     handleX = safe.x + (safe.w - handleW) / 2;
     handleY = safe.y + 2;
 
-    avail = cardW - pad * 2 - gap * (NW_ANDROID_CONTROL_COUNT - 1);
-    if (avail < NW_ANDROID_CONTROL_COUNT * 24)
-        return 0;
-    buttonW = avail / NW_ANDROID_CONTROL_COUNT;
-    buttonH = buttonW * 7 / 10;
-    if (buttonH < 44)
-        buttonH = 44;
-    if (buttonH > 64)
-        buttonH = 64;
+    buttonH = buttonW;
+    buttonX0 = cardX + pad;
     cardH = pad * 2 + buttonH;
     cardY = handleY + handleH;
 
@@ -741,7 +864,7 @@ NW_SDL_CODE static int nw_android_metrics(SDL_Rect *pHandle, SDL_Rect *pCard,
     }
     if (pButtons != NULL) {
         for (i = 0; i < NW_ANDROID_CONTROL_COUNT; i++) {
-            pButtons[i].x = (Sint16)(cardX + pad +
+            pButtons[i].x = (Sint16)(buttonX0 +
                                      i * (buttonW + gap));
             pButtons[i].y = (Sint16)(cardY + pad);
             pButtons[i].w = (Sint16)buttonW;
@@ -1734,8 +1857,13 @@ NW_SDL_CODE void CreatePlayerMainWindow(void *pPlayerCfg)
     flags = SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE;
 #elif defined(NW_PORTABLE_IOS)
     /* UIKit always makes the window the native screen surface.  Borderless
-     * hides the status bar; presentation letterboxes the 4:3 game. */
-    flags = SDL_WINDOW_BORDERLESS | SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE;
+     * hides the status bar; presentation letterboxes the 4:3 game.  High pixel
+     * density makes the window surface native-resolution instead of one point
+     * per pixel, so text and the control artwork stay crisp on Retina panels.
+     * SDL pointer coordinates and the layout remain in points; VideoSdl.c
+     * scales only the on-screen controls when it draws into the surface. */
+    flags = SDL_WINDOW_BORDERLESS | SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE |
+            SDL_WINDOW_HIGH_PIXEL_DENSITY;
 #endif
 
     /* Keep the Win32 oracle's DPI virtualization.  This must precede the

@@ -24,8 +24,8 @@ edge swipe reveals them temporarily.
 | `F` | Toggle borderless desktop fullscreen |
 | `H` | Toggle high-resolution and original assets |
 | Touch pointer (Android, iOS) | Tap or drag inside the game viewport; delivered as the selected left or right click |
-| Click mode (Android, iOS) | Tap `L CLICK`/`R CLICK` to toggle whether touch input becomes a left or right click; left is the default |
-| Rotation lock (Android, iOS) | Tap `LOCK` to pin the current orientation; the label changes to `UNLOCK` to resume rotation. Both platforms remember the lock state for later launches; iOS stores it in a separate `rotation.cfg` in its preference directory |
+| Click mode (Android, iOS) | Tap the mouse icon to toggle whether touch input becomes a left or right click; left is the default |
+| Rotation lock (Android, iOS) | Tap the padlock icon to pin the current orientation. An active lock is drawn inverted, with a bright button and a closed padlock; unlocked uses the normal dark button and open padlock. Both platforms remember the lock state for later launches; iOS stores it in a separate `rotation.cfg` in its preference directory |
 | Exit app (Android, iOS) | Tap `EXIT` in the unused area around the game |
 | On-screen keyboard (Android, iOS) | Tap `KEYBOARD` to show or hide the IME or iOS software keyboard |
 
@@ -44,15 +44,33 @@ Android runs the activity immersive full-screen and presents the same centered
 4:3 game view on the whole display. The status and navigation bars are hidden;
 a deliberate edge swipe may reveal them temporarily. The virtual controls use
 the letterbox bars whenever they fit there, because the bars are outside the
-game view: a portrait window gets one wide row across the bottom or top bar,
-and a wide landscape window gets two stacked buttons in each side bar
-(**EXIT**/**KEYBOARD** left, **LOCK**/**CLICK** right). In those layouts the
-buttons are always visible and never cover the game. When the window is close
-to 4:3 and there is no bar room, the controls move to a card that drops down
-from a small tab at the top center: only the tab is visible during play, and
-tapping it reveals a row of wide buttons across 70% of the display. The card
-closes when the player taps outside it or after about four idle seconds and
-may cover part of the game while open. The four controls are:
+game view: a portrait window gets one row of square buttons across the bottom
+or top bar, and a wide landscape window gets two stacked buttons in each side
+bar (**EXIT**/**KEYBOARD** left, **LOCK**/**CLICK** right). The buttons use a
+square side derived from the short window dimension, with a minimum touch
+size, so a wide bar never stretches them into a thin strip. The square also has
+an absolute ceiling of about 18 mm of physical display, a little above a
+phone-sized button, so a tablet does not turn the controls into slabs; phone
+side-bar columns use a tighter cap of about 64 dp because they stack two
+squares. Phone-sized layouts are icon-only. A tablet has room to draw a short
+name under the icon as well: `EXIT`, `KEYS`, `LOCK`/`LOCKED`, and
+`LEFT`/`RIGHT`. The choice follows the reported density and the short side of
+the window, never the operating system, so an iPhone behaves like an Android
+phone and an iPad like an Android tablet. The frame, icon, and name are drawn
+from generated high-resolution artwork rather than assembled from rectangles,
+so the edges and text stay smooth at every size; iOS allocates its window
+surface at the panel's native pixel density, so the artwork is never stretched
+up from point resolution. In those layouts the buttons
+are always visible and never cover the game. The pull-down tab and card use the
+same generated artwork: a rounded panel is stretched with a 9-grid blit so its
+border and corners stay sharp at any card size, and the tab chevrons are sprite
+tiles. When the
+window is
+close to 4:3 and there is no bar room, the controls move to a card that drops
+down from a small tab at the top center: only the tab is visible during play,
+and tapping it reveals a centered row of square buttons with the card hugging
+that row and its padding. The card closes when the player taps outside it or
+after about four idle seconds and may cover part of the game while open. The four controls are:
 
 - **EXIT** closes the game through the normal shutdown path, so a live save is
   written before the activity finishes.
@@ -60,19 +78,19 @@ may cover part of the game while open. The four controls are:
   at startup, even when a hardware keyboard is present, and is only shown by
   this control. Tapping anywhere outside the keyboard in the game window
   dismisses it; tapping the control itself toggles it off as well.
-- **LOCK** pins the current portrait or landscape orientation. The label changes
-  to **UNLOCK** and the closed-padlock icon becomes an open padlock; tapping it
-  resumes following the device sensors. This is an in-app lock and does not
-  change the system rotation setting. The lock state and the exact pinned
-  orientation are saved in the activity's `SharedPreferences`, separate from
-  the game save, so the next launch restores the same configuration
-  (re-applied once the activity is visible on Android 12 and newer); an
+- **LOCK** pins the current portrait or landscape orientation. The button then
+  switches to its inverted active look, with a bright body and a dark closed
+  padlock; tapping it again restores the normal dark button and the open
+  padlock and resumes following the device sensors. This is an in-app lock and
+  does not change the system rotation setting. The lock state and the exact
+  pinned orientation are saved in the activity's `SharedPreferences`, separate
+  from the game save, so the next launch restores the same configuration; an
   unlocked launch follows the sensors again.
 - **L CLICK** selects left-click mode for touch input. It is active at startup
-  and its mouse icon fills the selected top button while outlining the other
-  one. Tapping it changes the label to **R CLICK**, fills the right mouse
-  button, and delivers touch input as right clicks. Tapping again returns to
-  left-click mode.
+  and its mouse icon fills the left top button while outlining the right one.
+  Tapping it fills the right mouse button instead and delivers touch input as
+  right clicks; where labels are shown the name changes from `LEFT` to `RIGHT`.
+  Tapping again returns to left-click mode.
 
 Touches inside the game viewport become the normal game pointer, including
 clicks and drags, and are delivered as the selected click mode. A physical
@@ -99,22 +117,32 @@ inside the viewport as mouse-button input, so tapping a tile rotates it through
 the normal game path. The same four virtual controls as Android are
 **EXIT**, **KEYBOARD**, **LOCK/UNLOCK**, and **L CLICK/R CLICK**. They are
 drawn directly in the letterbox bars whenever they fit there: a portrait
-window uses one wide row in the bottom or top bar, and a wide landscape window
-uses two stacked buttons in each side bar. Both bar layouts leave the game view
-completely unobstructed. On a window close to 4:3, where no bar is large
-enough, the controls move to a pull-down card: only a small top tab is visible,
-and tapping it slides down a row of wide buttons across 70% of the screen.
-Tapping outside the card or leaving it idle for about four seconds closes it,
-and the card may cover the game while open. Left-click mode is
+window uses one row of square buttons in the bottom or top bar, and a wide
+landscape window uses two stacked buttons in each side bar. Both bar layouts
+leave the game view completely unobstructed. The square side comes from the
+short window dimension with a minimum touch size, so wide bars do not produce
+thin strips; the square also has an absolute ceiling of about 18 mm of physical
+display, with a tighter cap for the stacked columns in phone-sized side bars.
+Phone-sized layouts are icon-only, while a tablet draws a short name under the
+icon (`EXIT`, `KEYS`, `LOCK`/`LOCKED`, `LEFT`/`RIGHT`); the rule follows the
+reported density and window size and is the same on Android and iOS. On a
+window close to 4:3, where no bar is large enough, the
+controls move to a pull-down card: only a small top tab is visible, and
+tapping it slides down a centered row of square buttons with the card hugging
+that row and its padding. Tapping outside the card or leaving it idle for about
+four seconds closes it, and the card may cover the game while open. Left-click mode is
 selected at startup; tapping the click control makes viewport taps behave as
 right clicks. The keyboard control shows or hides the iOS software keyboard,
 which stays hidden at launch; tapping anywhere outside it in the game window
 dismisses it. The lock control pins the exact current display
 orientation by narrowing SDL's supported orientation set, including blocking a
-180-degree turn, and **UNLOCK** restores all of the orientations declared in
-`Info.plist`. The lock state and the pinned orientation are remembered: if
+180-degree turn, and unlocking restores all of the orientations declared in
+`Info.plist`. The control shows its state: inverted with a closed padlock and
+`LOCKED` while active, normal with an open padlock and `LOCK` otherwise.
+The lock state and the pinned orientation are remembered: if
 the app is locked, the next launch starts in that saved orientation and shows
-**UNLOCK**, even if the device is being held the other way. Unlocking applies
+the active **LOCKED** button, even if the device is being held the other way.
+Unlocking applies
 the full orientation set immediately, so the app turns to the device's current
 orientation without waiting for another rotation. The lock is stored in its own
 `rotation.cfg` in the preference directory, separate from the game save, so
@@ -168,9 +196,9 @@ bars, so the game canvas is never scaled to fill a wide screen and is never
 covered; only a near-4:3 window falls back to the top pull-down card. The
 activity follows
 all four sensor orientations while unlocked, so the centered canvas stays
-usable in portrait and either landscape direction. **LOCK** pins the current
-orientation and **UNLOCK** resumes sensor rotation; the lock is local to the
-app. Android has no in-app back button and no fullscreen toggle:
+usable in portrait and either landscape direction. The lock control pins the
+current orientation and tapping it again resumes sensor rotation; the lock is
+local to the app. Android has no in-app back button and no fullscreen toggle:
 full-screen mode is always on, while the platform navigation controls remain
 available through an edge swipe when the system provides them.
 
