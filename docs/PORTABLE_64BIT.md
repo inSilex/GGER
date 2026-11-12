@@ -13,8 +13,9 @@ records, and the custom heap. On a 32-bit build, a pointer *is* a 32-bit
 value, so this is invisible.
 
 Most 64-bit ports of the engine can still place every guest object below
-4 GiB (Linux `MAP_32BIT`, Windows low `VirtualAlloc`, Android 32-bit address
-space). iOS arm64 cannot. A stock iOS executable reserves the whole
+4 GiB (Linux `MAP_32BIT`, Windows low `VirtualAlloc`, and an Android build
+whose shared library happens to load below 4 GiB). iOS arm64 cannot. A stock
+iOS executable reserves the whole
 `0x0..0x100000000` range as `__PAGEZERO`, and the kernel does not hand out
 sub-4 GiB mappings to a process that has that reservation. That was
 confirmed on the target device during development.
@@ -38,9 +39,9 @@ extern uintptr_t nw_guest_base;
 
 - A **guest address** is a 32-bit offset from `nw_guest_base`.
 - A **host pointer** is `nw_guest_base + guest` for guest objects.
-- When `nw_guest_base == 0` (the original i686 oracle, Linux/Android low
-  builds, and the low `netwalk.exe` control), the two spaces are identical and
-  both conversions are identities.
+- When `nw_guest_base == 0` (the original i686 oracle, the low Linux/Windows
+  control, and an Android build whose library loaded below 4 GiB), the two
+  spaces are identical and both conversions are identities.
 
 ```c
 static inline nw_host_ptr_t nw_guest_to_host(nw_guest_addr_t guest)
@@ -98,6 +99,17 @@ image is linked at `0x140000000` so `nw_data_window` and the side table are
 already inside the window. The guest-window allocator starts scanning at
 `base + 0x10000` (the guest-zero reserve) and skips reserved regions with
 `VirtualQuery`.
+
+On Android the shared library may be loaded above 4 GiB by the dynamic
+linker, so `nw_guest_base` is non-zero even though the build is not a
+high-image link. `platforms/linux/linux_compat.c` therefore routes every
+`VirtualAlloc(NULL, ...)` through the window when the base is non-zero
+(`nw_mmap_window`): it starts at `base + 0x10000`, advances a page at a time,
+and uses `MAP_FIXED_NOREPLACE` so the game, SDL, and system-library mappings
+inside the window are skipped rather than replaced. A monotonic bump cursor
+keeps the common case to one mapping attempt and the scan wraps once to reuse
+freed holes. When the base is zero the low `nw_mmap_low` path is used
+unchanged.
 
 ## Native pointer side table
 

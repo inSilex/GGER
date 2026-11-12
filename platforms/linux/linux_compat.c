@@ -1849,6 +1849,97 @@ static void *nw_mmap_low(size_t size, int prot)
     nw_alloc_log("fail", 0, MAP_FAILED, size);
     return MAP_FAILED;
 }
+
+/*
+ * Map inside the 64-bit guest window.  When the image itself loads above
+ * 4 GiB (Android shared libraries, iOS, the Windows high proxy), every guest
+ * object must share nw_guest_base's 4 GiB-aligned window: the engine truncates
+ * host pointers to 32 bits in many window and VM fields, so the low half is a
+ * guest offset from that base.  Walk the window from the guest-zero reserve and
+ * use a non-replacing fixed mapping, so image and library mappings already
+ * inside the window are skipped instead of clobbered.  Guest 0..0xFFFF is
+ * never handed out.
+ */
+static uintptr_t nw_window_cursor;   /* first untried page, 0 until used */
+
+static void *nw_mmap_window(uintptr_t window, size_t size, int prot)
+{
+    uintptr_t origin;
+    uintptr_t limit;
+    uintptr_t cursor;
+    uintptr_t start;
+    uintptr_t stop;
+    size_t page;
+    size_t rounded;
+    int wrapped;
+    int saved_errno;
+
+    if (size == 0)
+        size = 1;
+    page = (size_t)sysconf(_SC_PAGESIZE);
+    if (page == 0)
+        page = 0x1000;
+    rounded = (size + page - 1) & ~(size_t)(page - 1);
+    if (rounded < size) {
+        errno = ENOMEM;
+        return MAP_FAILED;
+    }
+
+    limit = window + UINT64_C(0x100000000);
+    if (limit < window) {
+        errno = ENOMEM;
+        return MAP_FAILED;
+    }
+    /* Guest 0..0xffff stays unmapped so guest zero remains NULL. */
+    origin = (window + UINT64_C(0x10000) + page - 1) &
+             ~(uintptr_t)(page - 1);
+    if (origin < window) {
+        errno = ENOMEM;
+        return MAP_FAILED;
+    }
+
+    /* Resume at the last successful bump instead of rescanning every earlier
+     * allocation.  A freed hole below the cursor is picked up by the wrap. */
+    start = nw_window_cursor;
+    if (start < origin || start >= limit || (start & (page - 1)) != 0)
+        start = origin;
+
+    cursor = start;
+    wrapped = 0;
+    stop = limit;
+    for (;;) {
+        while (cursor < stop && rounded <= stop - cursor) {
+            void *p = mmap((void *)cursor, rounded, prot,
+                           MAP_PRIVATE | MAP_ANONYMOUS |
+                               NW_MAP_FIXED_NOREPLACE,
+                           -1, 0);
+            if (p != MAP_FAILED) {
+                uintptr_t got = (uintptr_t)p;
+                if (got >= origin && got < limit && rounded <= limit - got) {
+                    nw_window_cursor = got + rounded;
+                    nw_alloc_log("window", cursor, p, size);
+                    return p;
+                }
+                saved_errno = errno;
+                (void)munmap(p, rounded);
+                errno = saved_errno;
+            }
+            /* Advance a page at a time: a fixed mapping can fail on only part
+             * of a requested run, and a coarser step could step over a hole
+             * that is exactly the requested size. */
+            cursor += page;
+        }
+        if (wrapped || start == origin)
+            break;
+        wrapped = 1;
+        cursor = origin;
+        stop = start;
+    }
+
+    nw_alloc_log("fail", 0, MAP_FAILED, size);
+    errno = ENOMEM;
+    return MAP_FAILED;
+}
 #endif
 
 LPVOID VirtualAlloc(LPVOID lpAddress, SIZE_T dwSize, DWORD flAllocationType,
@@ -1894,7 +1985,9 @@ LPVOID VirtualAlloc(LPVOID lpAddress, SIZE_T dwSize, DWORD flAllocationType,
         flags |= NW_MAP_FIXED_NOREPLACE;
     }
 #if defined(__x86_64__) || defined(__aarch64__)
-    if (lpAddress == NULL) {
+    if (lpAddress == NULL && nw_guest_base != 0) {
+        p = nw_mmap_window(nw_guest_base, dwSize, prot);
+    } else if (lpAddress == NULL) {
         p = nw_mmap_low(dwSize, prot);
     } else {
         p = mmap(lpAddress, dwSize, prot, flags, -1, 0);
