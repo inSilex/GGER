@@ -540,7 +540,7 @@ def main() -> int:
         "",
         "/* Guest-window base.  Zero for every layout whose window lives below",
         " * 4 GiB (the original i686 image and the Linux/Android low builds);",
-        " * the 4 GiB-aligned high-image proxy and iOS use a non-zero base. */",
+        " * iOS and other high-image links use a non-zero base. */",
         "uintptr_t nw_guest_base = 0;",
         "",
         "static const NwWindowFixup nw_window_fixups[] = {",

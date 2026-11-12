@@ -30,7 +30,7 @@ void NwWin64Init(void)
 /* ==========================================================================
  * Layout diagnostics (opt-in with NW_LAYOUT_LOG).
  *
- * The high-image proxy was designed with the aid of layout and allocation
+ * The high-window layout was designed with the aid of layout and allocation
  * traces.  They are quiet by default now that the model is validated; set
  * NW_LAYOUT_LOG=1 to append them to nw_layout.log and stderr when triaging a
  * new target.  Crash reporting is separate and unaffected.
@@ -52,7 +52,7 @@ static int nw_force_high(void)
     if (cached < 0) {
         const char *e = getenv("NW_FORCE_HIGH");
         int image_high = (uintptr_t)nw_data_window >= UINT64_C(0x100000000);
-        /* A high image (the iOS/high-window proxy) already places every
+        /* A high image (iOS, or a high-window link) already places every
          * static guest object above 4 GiB, so allocations must follow it. */
         cached = image_high ||
                  (e != NULL && e[0] != '\0' && e[0] != '0') ? 1 : 0;

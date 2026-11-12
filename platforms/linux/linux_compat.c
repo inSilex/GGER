@@ -1852,7 +1852,7 @@ static void *nw_mmap_low(size_t size, int prot)
 
 /*
  * Map inside the 64-bit guest window.  When the image itself loads above
- * 4 GiB (Android shared libraries, iOS, the Windows high proxy), every guest
+ * 4 GiB (Android shared libraries, iOS, a high-image link), every guest
  * object must share nw_guest_base's 4 GiB-aligned window: the engine truncates
  * host pointers to 32 bits in many window and VM fields, so the low half is a
  * guest offset from that base.  Walk the window from the guest-zero reserve and

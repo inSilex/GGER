@@ -618,17 +618,6 @@ stage_desktop build/linux-x86_64 linux-x86_64 NETWALK.EXE \
 build_release windows-x64-mingw
 stage_desktop build/windows-x64-mingw windows-x64-mingw netwalk.exe \
     "${desktop_name:-netwalk.exe}"
-# High-image proxy used to validate the 64-bit guest window.  Optional: older
-# configurations (or a disabled NW_WINDOWS_HIGH_PROXY) do not produce it.
-if [[ -f build/windows-x64-mingw/netwalk-hi.exe ]]; then
-    cp -a build/windows-x64-mingw/netwalk-hi.exe \
-        "$out_dir/windows-x64-mingw/netwalk-hi.exe"
-    if ((embed_overlay)); then
-        python3 tools/nwembed.py \
-            --exe "$out_dir/windows-x64-mingw/netwalk-hi.exe" \
-            --overlay "$work/assets/overlay.nw"
-    fi
-fi
 
 if ((skip_android)); then
     printf '\n==> skipping Android APK (default; pass --android or --android-debug to build it)\n'

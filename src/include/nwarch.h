@@ -85,8 +85,8 @@ extern nw_host_ptr_t g_nw_window_ptr_slots[NW_WINDOW_BYTES / 4u];
  * iOS cannot obtain memory below 4 GiB, so the whole guest world (data
  * window, pointer side table, heap arenas and every guest allocation) is
  * placed in one 4 GiB-aligned window and a guest address becomes an offset
- * from this base.  The Windows high-image proxy build exercises the same
- * layout on a desktop host.
+ * from this base.  On Windows, NW_FORCE_HIGH=1 exercises the same layout on
+ * the desktop build.
  *
  * The base is always 4 GiB-aligned, so `(uint32_t)(uintptr_t)host` still
  * yields the guest offset for any host pointer inside the window: the store

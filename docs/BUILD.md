@@ -599,8 +599,8 @@ Other runtime configuration:
 | `NW_WINDOW_SCALE=N` | render scale | Initial desktop window scale |
 | `NW_WINDOW_RESIZABLE=0` | enabled | Disable desktop window resizing |
 | `NW_SF2=PATH` | `gm.sf2` | Alternate General MIDI SoundFont |
-| `NW_LAYOUT_LOG=1` | off | High-proxy layout/allocation trace in `nw_layout.log` (see [PORTABLE_64BIT.md](PORTABLE_64BIT.md)) |
-| `NW_FORCE_HIGH=1` | auto | Force the Windows proxy allocator above 4 GiB even for the low image |
+| `NW_LAYOUT_LOG=1` | off | Guest-window layout/allocation trace in `nw_layout.log` (see [PORTABLE_64BIT.md](PORTABLE_64BIT.md)) |
+| `NW_FORCE_HIGH=1` | auto | Force the Windows guest allocator above 4 GiB even for the low image |
 | `SDL_PS5_DISPLAY=WxH` | `1920x1080` | PS5 VideoOut display size |
 
 ## Clean rebuild

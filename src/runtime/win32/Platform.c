@@ -439,7 +439,7 @@ static void wlabel(HANDLE h, const char *k, unsigned long v)
 }
 
 /* ASCII 64-bit hex, so a text search of the crash log still finds full
- * addresses on the high proxy (wlabel/wd only carry the low 32 bits). */
+ * addresses in the high window (wlabel/wd only carry the low 32 bits). */
 static void whex64(HANDLE h, const char *k, unsigned long long v)
 {
     static const char digits[] = "0123456789abcdef";
@@ -611,7 +611,7 @@ static void NwDumpFault(HANDLE h, EXCEPTION_RECORD *rec, CONTEXT *ctx)
     }
 
     /* Legacy absolute-address snapshot.  Only valid for the low oracle image;
-     * a high image base (the iOS/high-window proxy) would fault on these. */
+     * a high image base (iOS, or NW_FORCE_HIGH=1) would fault on these. */
     if (nw_guest_base == 0) {
         unsigned long o = *(unsigned long *)(uintptr_t)0x4191E0; /* g_display_object */
         wlabel(h, "sbase",   *(unsigned long *)(uintptr_t)0x419CF8); 

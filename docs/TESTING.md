@@ -398,10 +398,10 @@ Device runtime checks:
   log, but the engine has no per-stage trace and no fatal-signal reporter.
   Use Xcode's debugger or the system crash report when a device fault needs
   investigation.
-- The Windows high proxy runs at render scale 4 and uses the scaled sprite
+- The Windows build runs at render scale 4 and uses the scaled sprite
   blitter. The iOS build ships at scale 1, which reaches the row-copy
-  functions instead; exercise that path with `NW_RENDER_SCALE=1` when
-  validating the proxy.
+  functions instead; exercise that path with `NW_RENDER_SCALE=1` on Windows
+  when validating the address model.
 - The same four virtual controls as Android are drawn directly in the
   letterbox bars when they fit there, and on the pull-down card otherwise:
   `EXIT`, `KEYBOARD`, `LOCK`/`UNLOCK`, and `L CLICK`/`R CLICK`.

@@ -94,11 +94,11 @@ framebuffer, the scratch buffer that becomes the engine heap base, and the VM
 native-call stacks — is allocated by scanning for free ranges **inside** that
 window. Guest 0..0xFFFF is never handed out.
 
-On Windows x86-64, the high proxy also factors in a second requirement: the
-image is linked at `0x140000000` so `nw_data_window` and the side table are
-already inside the window. The guest-window allocator starts scanning at
-`base + 0x10000` (the guest-zero reserve) and skips reserved regions with
-`VirtualQuery`.
+On Windows x86-64 the shipping image is linked at `0x400000`, so the guest
+window starts at the low image base. Setting `NW_FORCE_HIGH=1` places the
+arena above 4 GiB instead and exercises the same high-window path on that one
+binary. The guest-window allocator starts scanning at `base + 0x10000` (the
+guest-zero reserve) and skips reserved regions with `VirtualQuery`.
 
 On Android the shared library may be loaded above 4 GiB by the dynamic
 linker, so `nw_guest_base` is non-zero even though the build is not a
@@ -186,29 +186,13 @@ for all names mapped to `_g_nw_window_ptr_slots+0x...`, then check every
 `extern` declaration of those names. Any declaration with a scalar type is a
 latent truncation.
 
-## Validation harness: the high-image Windows proxy
+## Validation harness on Windows
 
-Testing the model on iOS itself is slow. The desktop proxy makes the same
-address layout reproducible on Windows x86-64:
-
-- `netwalk.exe` — low control. Image base `0x400000`, `nw_guest_base == 0`.
-  This is the shipping layout and the behavioural oracle.
-- `netwalk-hi.exe` — high proxy. Linked with
-  `-Wl,--image-base,0x140000000 -Wl,--disable-dynamicbase`, so
-  `nw_data_window`, the side table, and all static guest objects land above
-  4 GiB. The allocator is forced high too, so the whole run exercises
-  `nw_guest_to_host`, the side table, and the window scan exactly as iOS
-  will.
-
-The proxy is built by the normal Windows preset:
-
-```sh
-cmake --preset windows-x64-mingw
-cmake --build --preset windows-x64-mingw
-```
-
-`NW_WINDOWS_HIGH_PROXY` (default `ON`) adds the second target. Both binaries
-are staged next to `overlay.nw` and `gm.sf2`.
+The shipping Windows build is the low control: image base `0x400000` and
+`nw_guest_base == 0`. To reproduce the high-window layout on the same binary,
+run it with `NW_FORCE_HIGH=1`, which moves the guest arena above 4 GiB. That
+exercises `nw_guest_to_host`, the side table, and the window scan the same way
+iOS does, while a normal run remains the behavioural oracle.
 
 ### Reading a crash
 
@@ -232,7 +216,8 @@ The layout instrumentation in `windows/win64_compat.c` writes
 
 ## Fix log
 
-The proxy was exercised in rounds; each round fixed one crash class.
+The model was exercised in rounds on Windows and iOS; each round fixed one
+crash class.
 
 | Round | Symptom | Root cause | Fix |
 |---|---|---|---|
@@ -314,6 +299,6 @@ certificate and provisioning profile.
 3. Search for `*` loaded from a 32-bit field and used without
    `nw_guest_to_host`.
 4. Check VM operands: everything the VM pushes is a guest value.
-5. Re-run both proxies: `netwalk-hi.exe` for the model, `netwalk.exe` for
-   behaviour.
+5. Re-run the Windows build with `NW_FORCE_HIGH=1` for the address model and
+   without it for behaviour, and check the iOS build on a device.
 6. Resolve any fault with the `fault64` line before guessing.
