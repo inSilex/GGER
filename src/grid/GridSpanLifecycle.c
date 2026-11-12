@@ -243,10 +243,10 @@ extern void AddRectToExtentList(int nMaxY, int nMaxX, int nMinY, int nMinX);
 
 void __stdcall AddGridCellSpanToExtentList(GridCellRec *pRec)
 {
-    const GridRefRec *pRef = (const GridRefRec *)(uintptr_t)pRec->pRefRec;
+    const GridRefRec *pRef = (const GridRefRec *)(uintptr_t)nw_guest_to_host(pRec->pRefRec);
 
     const uint16_t   *puSrc =
-        (const uint16_t *)(uintptr_t)pRef->pSourceWords;
+        (const uint16_t *)(uintptr_t)nw_guest_to_host(pRef->pSourceWords);
 
     /* Cell offsets, sign-extended. */
     int nMinX = (int)pRec->iOffsetX;                              /* MOVSX ESI,word [EBX+8]  */
@@ -517,7 +517,7 @@ void __stdcall AdvancePendingGridCellSpanEntryAndDispatch(unsigned char bRedrawF
         const PoolPickEntry *pPoolRec = &g_pPoolTable[dwStateIndex];
 
         const unsigned char *pPickArray =
-            (const unsigned char *)(uintptr_t)pPoolRec->pPickArray;
+            (const unsigned char *)(uintptr_t)nw_guest_to_host(pPoolRec->pPickArray);
 
         const uint32_t dwSeedHigh = dwRngState >> 16;
 
@@ -541,7 +541,7 @@ void __stdcall AdvancePendingGridCellSpanEntryAndDispatch(unsigned char bRedrawF
                              0xFFFFu,
                              0u,
                              (uint32_t)(uintptr_t)pEntry,
-                             (uint8_t *)(uintptr_t)pEntry->pCursorA);
+                             (uint8_t *)(uintptr_t)nw_guest_to_host(pEntry->pCursorA));
 
     /* EAX holds no meaningful result on either exit; see the header note. */
 }
@@ -645,14 +645,14 @@ GridCellSpanRec * __stdcall AllocGridCellSpanRecord(uint16_t wOffsetY,
 
     /* Table-relative entry lookup: base pointer + (index - base index). */
     GridRefEntry *pRef =
-        (GridRefEntry *)(uintptr_t)pTab->pEntries +
+        (GridRefEntry *)(uintptr_t)nw_guest_to_host(pTab->pEntries) +
         (nRefRecIndex - (int)pTab->bBaseIndex);
     pRec->pRefRec = (uint32_t)(uintptr_t)pRef;
 
     /* Advance the running X offset by the reference's span.  wSrcX is read
      * THROUGH the entry's pointer, zero-extended, exactly as MOVZX [EDX] does. */
     *pnCellOffsetX = *pnCellOffsetX + ((int)(uint16_t)
-        ((const uint16_t *)(uintptr_t)pRef->pSrcWords)[0]
+        ((const uint16_t *)(uintptr_t)nw_guest_to_host(pRef->pSrcWords))[0]
                                        - (int)pRef->iBaseX);
 
     AddGridCellSpanToExtentList(pRec);
@@ -790,10 +790,10 @@ void __stdcall AllocateGridCellSpanRecordAndDispatch(int nCellMajor, int nCellMi
        pointer to the whole word. */
     if ((dwOpcode & 0x100u) != 0u) {
         PoolPickEntry *pPoolRec = &g_pPoolTable[dwPickIndex];
-        uint8_t *pHandlers = (uint8_t *)(uintptr_t)pPoolRec->pPickHandlers;
+        uint8_t *pHandlers = (uint8_t *)(uintptr_t)nw_guest_to_host(pPoolRec->pPickHandlers);
 
         const uint8_t *pArray =
-            (const uint8_t *)(uintptr_t)pPoolRec->pPickArray;
+            (const uint8_t *)(uintptr_t)nw_guest_to_host(pPoolRec->pPickArray);
         const uint32_t dwHigh = (dwRngState >> 16) & 0xFFFFu;
         dwPickIndex = (uint32_t)pArray[(((dwHigh * (uint32_t)pArray[0]) >> 16) + 1u)];
 
@@ -864,9 +864,9 @@ void __stdcall AllocateGridCellSpanRecordAndDispatch(int nCellMajor, int nCellMi
             /* memset over the same BYTE count — this is what refutes the
                8-byte-stride reading of +0x0C. */
             FillMemoryWithZeroBytes(dwPayloadBytes,
-                                    (uint8_t *)(uintptr_t)pRec->pPayload);
+                                    (uint8_t *)(uintptr_t)nw_guest_to_host(pRec->pPayload));
             pRec->bStatusFlags |= 0x08u;
-            pPayloadArg = (uint8_t *)(uintptr_t)pRec->pPayload;
+            pPayloadArg = (uint8_t *)(uintptr_t)nw_guest_to_host(pRec->pPayload);
         } else {
             /* Inline: the slot's own last dword is the payload, and argument 4
                points AT it rather than at a block. */
@@ -894,7 +894,7 @@ void __stdcall AllocateGridCellSpanRecordAndDispatch(int nCellMajor, int nCellMi
                              dwDepthIndex,
                              (uint32_t)(uintptr_t)pRec,
                              (uint32_t)(uintptr_t)pStateEntry,
-                             (uint8_t *)(uintptr_t)pStateEntry->pCursorA);
+                             (uint8_t *)(uintptr_t)nw_guest_to_host(pStateEntry->pCursorA));
 }
 #endif /* NW_UNIT_AllocateGridCellSpanRecordAndDispatch */
 
@@ -912,10 +912,10 @@ void __stdcall AllocateGridCellSpanRecordAndDispatch(int nCellMajor, int nCellMi
 
 #include <stdint.h>
 #include "nwglobals.h"
-extern unsigned long g_pSlotsBottom;
-extern unsigned long g_pSlotsTop;
+extern uintptr_t g_pSlotsBottom;
+extern uintptr_t g_pSlotsTop;
 extern void nwtrace_hex(const char *, unsigned long);  /* Optional trace. */
-extern unsigned long g_pHeapBlockList;
+extern uintptr_t g_pHeapBlockList;
 extern uint32_t *g_pCursorBlock;
 
 void ClearGridSpanChainBoundsAndHeapState(void)
@@ -1008,7 +1008,7 @@ BOOL __stdcall InstallActiveGridCellRef(BYTE bRefreshExtents, int nRecordIndex)
                     (uint32_t)(uintptr_t)pDesc->pRefCell;
             } else {
                 g_ActiveGridCellRecord.pRefRec =
-                    *(const uint32_t *)(const void *)(uintptr_t)pDesc->pRefCell;
+                    *(const uint32_t *)(const void *)(uintptr_t)nw_guest_to_host(pDesc->pRefCell);
             }
         }
     }
@@ -1414,7 +1414,7 @@ void ReleaseGridCellSpanRecordsAndDispatchEntry(unsigned char bFullSweepMode,
                     if ((pSlot->bStatusFlags & 0x08u) != 0u) {
                         /* bit 3 = an 8-byte-stride sub-span block is attached */
                         FreeHeapBlock((unsigned char *)(uintptr_t)
-                                      pSlot->pHeapBlock);
+                                      nw_guest_to_host(pSlot->pHeapBlock));
                     }
 
                     /* Recorded BEFORE the release calls, because the epilogue
@@ -1463,7 +1463,7 @@ void ReleaseGridCellSpanRecordsAndDispatchEntry(unsigned char bFullSweepMode,
         pSlot = (GridSpanSlot *)(void *)((unsigned char *)(void *)pSlot - 0x10);
         /* g_pSlotsBottom is RE-READ every iteration: the release path calls
            FreeArenaSlot, which can shrink the arena and move that sentinel. */
-        if ((unsigned long)(size_t)pSlot <= (unsigned long)(size_t)g_pSlotsBottom) {
+        if ((uintptr_t)(void *)pSlot <= (uintptr_t)(void *)g_pSlotsBottom) {
             break;
         }
     }
@@ -1480,7 +1480,7 @@ void ReleaseGridCellSpanRecordsAndDispatchEntry(unsigned char bFullSweepMode,
                              (unsigned char)((uint32_t)nCellMinor & 0xFFu),
                              0u, 0xFFFFu, 0u,
                              (uint32_t)(uintptr_t)pEntry,
-                             (uint8_t *)(uintptr_t)pEntry->pCursorB);
+                             (uint8_t *)(uintptr_t)nw_guest_to_host(pEntry->pCursorB));
 }
 #endif /* NW_UNIT_ReleaseGridCellSpanRecordsAndDispatchEntry */
 
@@ -1659,9 +1659,9 @@ void ReleaseTopGridCellSpans(int32_t nSpanCount)
         /* Undo the offset advance this record caused when it was pushed. The
            arithmetic is done unsigned then subtracted, as SUB does. */
         const GridRefEntry *pRef =
-            (const GridRefEntry *)(uintptr_t)pRec->pRefRec;
+            (const GridRefEntry *)(uintptr_t)nw_guest_to_host(pRec->pRefRec);
         uint32_t uSpan =
-            (uint32_t)((const uint16_t *)(uintptr_t)pRef->pSrcWords)[0] -
+            (uint32_t)((const uint16_t *)(uintptr_t)nw_guest_to_host(pRef->pSrcWords))[0] -
             (uint32_t)(int32_t)pRef->iBaseX;
         g_nGridCellOffsetX = (int32_t)((uint32_t)g_nGridCellOffsetX - uSpan);
 
@@ -1820,7 +1820,7 @@ void __stdcall ResolveGridReferenceAndAddCellSpan(uint8_t bRefRelative, GridCell
 
         const unsigned int uIdx = PickRefEntryIndex(pRefSel->bRefFlags, &pGridRec->bFlags);
         const uint32_t *papTable =
-            (const uint32_t *)(uintptr_t)pRefSel->pRefEntry;
+            (const uint32_t *)(uintptr_t)nw_guest_to_host(pRefSel->pRefEntry);
 
         pGridRec->pRefRec = papTable[uIdx];
     }
@@ -2195,8 +2195,8 @@ int __stdcall TestPointInsideGridSpanRecord(int32_t nPointY, int32_t nPointX,
         return 0;
     }
 
-    pExt  = (const ExtentDescriptor *)(uintptr_t)pRec->pExtentDesc;
-    pwExt = (const uint16_t *)(uintptr_t)pExt->pWords; /* EDX[0], EDX[1] */
+    pExt  = (const ExtentDescriptor *)(uintptr_t)nw_guest_to_host(pRec->pExtentDesc);
+    pwExt = (const uint16_t *)(uintptr_t)nw_guest_to_host(pExt->pWords); /* EDX[0], EDX[1] */
 
     if (iMinX + (int32_t)pwExt[0] < nPointX) {
         return 0;

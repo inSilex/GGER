@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build the GGER Linux and Windows release artifacts in the netwalk-build
-# image, with opt-in PS5 and Android packaging.
+# image, with opt-in PS5, Android, and iOS packaging.
 #
 # This script lives inside the image and runs as the container entry point.
 # Use ../../docker/build-releases.sh on the host unless you are invoking the
@@ -26,6 +26,18 @@ ps5_requested=0
 skip_ps5_explicit=0
 skip_android=1
 android_debug=0
+skip_ios=1
+ios_requested=0
+ios_game=0
+ios_sdk=${NW_IOS_SDK:-}
+ios_min=${NW_IOS_MIN:-13.0}
+ios_cache=${NW_IOS_SDK_CACHE:-/cache/ios-sdk}
+ios_sign_mode=${NW_IOS_SIGN_MODE:-none}
+ios_sign_p12=${NW_IOS_SIGN_P12:-}
+ios_sign_p12_password_file=${NW_IOS_SIGN_P12_PASSWORD_FILE:-}
+ios_sign_entitlements=${NW_IOS_SIGN_ENTITLEMENTS:-}
+ios_sign_profile=${NW_IOS_SIGN_PROVISIONING_PROFILE:-}
+ios_sign_team_id=${NW_IOS_SIGN_TEAM_ID:-}
 ffpkg=0
 
 usage() {
@@ -61,6 +73,11 @@ Options:
   --android          Build the signed Android release APK
   --android-debug    Build a debug-signed Android APK
   --skip-android     Skip the Android APK (default)
+  --ios              Build the NetWalk iOS game app and IPA
+  --ios-sdk PATH     iPhoneOS.sdk directory, Xcode.app tree, or .xip file
+                     (default: NW_IOS_SDK from the environment)
+  --ios-min VERSION  Minimum iOS deployment target (default: 13.0)
+  --skip-ios         Skip the iOS target (default)
   -h, --help         Show this help
 
 Arguments:
@@ -69,7 +86,8 @@ Arguments:
                      release executables after its lowercase filename.
 
 The Linux, Windows, Android, and PS5 builds use the toolchain already in the
-image.  The Linux executable links glibc dynamically, so its runtime glibc must
+image; iOS additionally needs the Apple SDK mounted with --ios-sdk.  The Linux
+executable links glibc dynamically, so its runtime glibc must
 be at least as new as the image's glibc.  Linux and Windows are built by
 default; pass --ps5 for the native PS5 title.  The default Docker image
 contains a pinned ps5-payload-dev SDK, LLVM 20, the native converter, libc.prx,
@@ -94,6 +112,18 @@ lowercased.  Pass --no-overlay to omit the overlay and stage binaries that
 search for one at runtime; Android packaging needs the overlay, so --no-overlay
 cannot be combined with --android or --android-debug.  The overlay source
 options are mutually exclusive.
+
+iOS is skipped by default.  Pass --ios with --ios-sdk (or NW_IOS_SDK) to
+compile and package the NetWalk game.  The SDK input may be an
+iPhoneOS.sdk directory, an Xcode.app tree, or a .xip file.  The container
+builds compiler-rt's iOS builtins from the pinned source, then stages only
+ios/NetWalk.ipa; the intermediate .app stays in the build tree.  The result is
+unsigned unless
+NW_IOS_SIGN_MODE is adhoc or apple; apple signing also reads NW_IOS_SIGN_P12,
+NW_IOS_SIGN_P12_PASSWORD_FILE, NW_IOS_SIGN_ENTITLEMENTS,
+NW_IOS_SIGN_PROVISIONING_PROFILE, and NW_IOS_SIGN_TEAM_ID.  A profile without
+explicit entitlements supplies the signature's Entitlements.  The game requires
+an overlay, so --no-overlay produces a package that cannot start.
 
 --embed-overlay appends the overlay to the Linux and Windows executables and
 omits overlay.nw from those desktop directories.  It still requires a source
@@ -203,6 +233,26 @@ while (($#)); do
             android_debug=0
             shift
             ;;
+        --ios)
+            skip_ios=0
+            ios_requested=1
+            ios_game=1
+            shift
+            ;;
+        --ios-sdk)
+            ios_sdk=${2:?--ios-sdk needs a path}
+            shift 2
+            ;;
+        --ios-min)
+            ios_min=${2:?--ios-min needs a version}
+            shift 2
+            ;;
+        --skip-ios)
+            skip_ios=1
+            ios_requested=0
+            ios_game=0
+            shift
+            ;;
         -h|--help)
             usage
             exit 0
@@ -266,6 +316,29 @@ if ((skip_android == 0 && android_debug == 0)); then
     done
     [[ -f "$NW_ANDROID_KEYSTORE" ]] ||
         die "Android keystore not found: $NW_ANDROID_KEYSTORE"
+fi
+
+if ((skip_ios == 0)); then
+    [[ -n "$ios_sdk" ]] ||
+        die "iOS build requested but --ios-sdk (or NW_IOS_SDK) is not set"
+    ((ios_game)) ||
+        die "iOS build requested but no target selected;"$'\n' \
+            "    pass --ios"
+    if [[ "$ios_sdk" != /* && -e "$ios_sdk" ]]; then
+        ios_sdk="$(cd -- "$(dirname -- "$ios_sdk")" && pwd)/$(basename -- "$ios_sdk")"
+    fi
+    [[ -e "$ios_sdk" ]] || die "iOS SDK input not found: $ios_sdk"
+    [[ -x "$source_dir/docker/ios-sdk.sh" ]] ||
+        die "missing iOS SDK resolver: $source_dir/docker/ios-sdk.sh"
+    [[ -x "$source_dir/docker/ios-builtins.sh" ]] ||
+        die "missing iOS builtins builder: $source_dir/docker/ios-builtins.sh"
+    ((ios_game == 0 || no_overlay == 0)) ||
+        die "--ios needs an overlay; pass --overlay, --extract-assets, or"$'\n' \
+            "    restore assets/overlay.nw (--no-overlay makes an unplayable app)"
+    for tool in clang-20 clang++-20 ld64.lld-20 llvm-ar-20 llvm-nm-20 zip; do
+        command -v "$tool" >/dev/null 2>&1 ||
+            die "missing iOS build tool: $tool"
+    done
 fi
 
 [[ -d "$source_dir" ]] || die "source directory not found: $source_dir"
@@ -344,6 +417,7 @@ rm -rf -- \
     "$out_dir/linux-x86_64" \
     "$out_dir/windows-x64-mingw" \
     "$out_dir/android" \
+    "$out_dir/ios" \
     "$out_dir/PPSA99877" \
     "$out_dir/PPSA99877.ffpkg"
 mkdir -p assets
@@ -459,6 +533,76 @@ build_android() {
     sha256sum "$out_dir/android/NetWalk.apk"
 }
 
+build_ios() {
+    local sdk_env="$work/ios-sdk.env"
+    local builtins_env="$work/ios-builtins.env"
+    local build_dir="$work/build/ios"
+    local cmake_flags=()
+    local build_targets=()
+    local name
+
+    cmake_flags+=(-DNW_IOS_BUILD_GAME=ON)
+    build_targets+=(ios-game-ipa)
+
+    cmake_flags+=(-DNW_IOS_SIGN_MODE="$ios_sign_mode")
+    [[ -z "$ios_sign_p12" ]] ||
+        cmake_flags+=(-DNW_IOS_SIGN_P12="$ios_sign_p12")
+    [[ -z "$ios_sign_p12_password_file" ]] ||
+        cmake_flags+=(-DNW_IOS_SIGN_P12_PASSWORD_FILE="$ios_sign_p12_password_file")
+    [[ -z "$ios_sign_entitlements" ]] ||
+        cmake_flags+=(-DNW_IOS_SIGN_ENTITLEMENTS="$ios_sign_entitlements")
+    [[ -z "$ios_sign_profile" ]] ||
+        cmake_flags+=(-DNW_IOS_SIGN_PROVISIONING_PROFILE="$ios_sign_profile")
+    [[ -z "$ios_sign_team_id" ]] ||
+        cmake_flags+=(-DNW_IOS_SIGN_TEAM_ID="$ios_sign_team_id")
+
+    mkdir -p "$ios_cache"
+    printf '\n==> resolving iOS SDK\n'
+    "$source_dir/docker/ios-sdk.sh" \
+        --input "$ios_sdk" \
+        --cache "$ios_cache" \
+        --min "$ios_min" \
+        --env-out "$sdk_env"
+    # shellcheck disable=SC1090
+    source "$sdk_env"
+
+    printf '\n==> building compiler-rt iOS builtins\n'
+    "$source_dir/docker/ios-builtins.sh" \
+        --sdk "$NW_IOS_SDK" \
+        --min "$ios_min" \
+        --out "$ios_cache/builtins" >"$builtins_env"
+    # shellcheck disable=SC1090
+    source "$builtins_env"
+
+    printf '\n==> configuring iOS app\n'
+    rm -rf "$build_dir"
+    cmake -G Ninja -S "$work" -B "$build_dir" \
+        -DCMAKE_TOOLCHAIN_FILE="$work/cmake/toolchain-ios.cmake" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DNW_IOS_SDK="$NW_IOS_SDK" \
+        -DNW_IOS_SDK_CACHE="$ios_cache" \
+        -DNW_IOS_MIN="$ios_min" \
+        -DNW_IOS_BUILTINS="$NW_IOS_BUILTINS" \
+        "${cmake_flags[@]}"
+    printf '\n==> building iOS app\n'
+    cmake --build "$build_dir" --target "${build_targets[@]}" \
+        --parallel "$jobs"
+
+    rm -rf "$out_dir/ios"
+    mkdir -p "$out_dir/ios"
+    name=NetWalk
+    [[ -f "$build_dir/$name.ipa" ]] ||
+        die "iOS build did not produce $build_dir/$name.ipa"
+    [[ -d "$build_dir/$name.app" ]] ||
+        die "iOS build did not produce $build_dir/$name.app"
+    [[ -f "$build_dir/$name.app/overlay.nw" ]] ||
+        die "iOS game bundle is missing overlay.nw"
+    [[ -f "$build_dir/$name.app/gm.sf2" ]] ||
+        die "iOS game bundle is missing gm.sf2"
+    cp -a "$build_dir/$name.ipa" "$out_dir/ios/$name.ipa"
+    sha256sum "$out_dir/ios/$name.ipa"
+}
+
 printf 'GGER release build\n'
 printf '  source: %s\n' "$source_dir"
 printf '  output: %s\n' "$out_dir"
@@ -474,6 +618,17 @@ stage_desktop build/linux-x86_64 linux-x86_64 NETWALK.EXE \
 build_release windows-x64-mingw
 stage_desktop build/windows-x64-mingw windows-x64-mingw netwalk.exe \
     "${desktop_name:-netwalk.exe}"
+# High-image proxy used to validate the 64-bit guest window.  Optional: older
+# configurations (or a disabled NW_WINDOWS_HIGH_PROXY) do not produce it.
+if [[ -f build/windows-x64-mingw/netwalk-hi.exe ]]; then
+    cp -a build/windows-x64-mingw/netwalk-hi.exe \
+        "$out_dir/windows-x64-mingw/netwalk-hi.exe"
+    if ((embed_overlay)); then
+        python3 tools/nwembed.py \
+            --exe "$out_dir/windows-x64-mingw/netwalk-hi.exe" \
+            --overlay "$work/assets/overlay.nw"
+    fi
+fi
 
 if ((skip_android)); then
     printf '\n==> skipping Android APK (default; pass --android or --android-debug to build it)\n'
@@ -485,6 +640,12 @@ else
         printf '\n==> building signed Android release APK\n'
         build_android android
     fi
+fi
+
+if ((skip_ios)); then
+    printf '\n==> skipping iOS app (default; pass --ios to build it)\n'
+else
+    build_ios
 fi
 
 if ((skip_ps5)); then

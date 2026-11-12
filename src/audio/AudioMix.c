@@ -355,12 +355,14 @@ void MixActiveAudioSlotsIntoWaveOutBuffer(void)
             if (dwMixed == 0u) {                
                 CopyDwordsAndFillTailWithSilence(/* f(count, src, dst)            */
                     dwBytes,
-                    (const uint32_t *)(uintptr_t)pSlot->dwSrcCursor,
+                    (const uint32_t *)(uintptr_t)nw_guest_to_host(
+                        pSlot->dwSrcCursor),
                     pdwDst);
             } else {
                 BlendSaturatedByteBuffers(
                     dwBytes,
-                    (const unsigned int *)(uintptr_t)pSlot->dwSrcCursor,
+                    (const unsigned int *)(uintptr_t)nw_guest_to_host(
+                        pSlot->dwSrcCursor),
                     (unsigned int *)pdwDst);
             }
 

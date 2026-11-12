@@ -10,6 +10,7 @@ Gamos Game Engine Reanimated (GGER) is a behavioral re-creation of the Gamos
 | [SAVES.md](SAVES.md) | Desktop save, PS5 path/migration order, first run, clean start |
 | [PS5.md](PS5.md) | Native title build, staging, deployment, save/IME caveats |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Source layout, portableizer, platform layers, rendering |
+| [PORTABLE_64BIT.md](PORTABLE_64BIT.md) | Guest/host address model, iOS 4 GiB window, high-image validation |
 | [PROVENANCE.md](PROVENANCE.md) | Verified release hashes, section checks, function disassembly |
 | [CONVERSION.md](CONVERSION.md) | Naming, assembly removal, provenance and cleanup policy |
 | [TESTING.md](TESTING.md) | Build gates, desktop, Android, and PS5 checks |

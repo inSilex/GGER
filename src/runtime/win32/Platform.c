@@ -334,6 +334,7 @@ __asm__(".globl DispatchPendingSignalHandler\n"
 
 #include <windows.h>
 #include <stdint.h>
+#include "nwarch.h"
 extern unsigned char nw_data_window[] __asm__("nw_data_window");
 #ifdef NWDEBUG_ENABLED
 void nwtrace_hex(const char *, unsigned long);
@@ -368,17 +369,10 @@ void *FindCurrentThreadContext(DWORD dwUnusedParam1 __attribute__((unused)),
     if (pTable == NULL) return NULL;     /* defensive: table not built yet */
 
     for (iSlot = 0; iSlot < 0x400; iSlot++) {
-        pContext = (void *)(uintptr_t)pTable[iSlot];
-#if NW_WINDOW_PTR_SIDETABLE
-        /* Slot 1 is the main thread's context record inside nw_data_window.
-         * The table stores 32-bit guest pointers, and a 64-bit PIE target
-         * places that window above 4 GiB, so the stored value is only the
-         * truncated address.  Restore the full pointer before reading the
-         * thread id at +0x18. */
-        if (iSlot == 1 &&
-            pContext == (void *)(uintptr_t)(uint32_t)(uintptr_t)(nw_data_window + 0xd23))
-            pContext = (void *)(nw_data_window + 0xd23);
-#endif
+        /* The thread-buffer table stores 32-bit guest addresses.  Restore
+         * the full host pointer before reading the thread id at +0x18; this
+         * covers both the original low layout and the 64-bit guest window. */
+        pContext = (void *)(uintptr_t)nw_guest_to_host(pTable[iSlot]);
 #ifdef NWDEBUG_ENABLED
         if (pContext != NULL) nwtrace_hex("fctc_live_slot", ((unsigned long)iSlot << 20) | ((unsigned long)(void *)pContext & 0xFFFFF));
 #endif
@@ -444,6 +438,25 @@ static void wlabel(HANDLE h, const char *k, unsigned long v)
     wd(h, v);
 }
 
+/* ASCII 64-bit hex, so a text search of the crash log still finds full
+ * addresses on the high proxy (wlabel/wd only carry the low 32 bits). */
+static void whex64(HANDLE h, const char *k, unsigned long long v)
+{
+    static const char digits[] = "0123456789abcdef";
+    char buf[17];
+    int i;
+
+    for (i = 15; i >= 0; --i) {
+        buf[i] = digits[(unsigned)(v & 15u)];
+        v >>= 4;
+    }
+    buf[16] = 0;
+    w(h, " ");
+    w(h, k);
+    w(h, "=0x");
+    w(h, buf);
+}
+
 /* ------------------------------------------------------------------ modules */
 
 static char *nw_basename(char *p)
@@ -456,22 +469,22 @@ static char *nw_basename(char *p)
 /* If `a` lies inside a loaded image module (any module, ours included), print
  * " <k>=<module-basename>+0x<offset>" (or " k[<slot>]=..." when k is NULL) and
  * return 1.  Otherwise print nothing and return 0. */
-static int wres(HANDLE h, const char *k, int slot, unsigned long a)
+static int wres(HANDLE h, const char *k, int slot, unsigned long long a)
 {
     MEMORY_BASIC_INFORMATION mbi;
     char path[MAX_PATH];
     char rev[8], one[2];
-    unsigned long base;
+    unsigned long long base;
     int r = 0, m = slot;
 
-    if (a < 0x10000UL)
+    if (a < 0x10000ULL)
         return 0;
     if (VirtualQuery((LPCVOID)(uintptr_t)a, &mbi, sizeof mbi) != sizeof(mbi))
         return 0;
     if (mbi.Type != MEM_IMAGE)
         return 0;
 
-    base = (unsigned long)(uintptr_t)mbi.AllocationBase;
+    base = (unsigned long long)(uintptr_t)mbi.AllocationBase;
     path[0] = 0;
     if (GetModuleFileNameA((HMODULE)mbi.AllocationBase, path, sizeof path) == 0)
         path[0] = 0;
@@ -488,7 +501,7 @@ static int wres(HANDLE h, const char *k, int slot, unsigned long a)
     }
     w(h, "=");
     w(h, nw_basename(path));
-    w(h, "+"); wd(h, a - base);
+    w(h, "+"); wd(h, (unsigned long)(a - base));
     return 1;
 }
 
@@ -506,6 +519,27 @@ static void NwDumpFault(HANDLE h, EXCEPTION_RECORD *rec, CONTEXT *ctx)
     else
         w(h, " iam=secondary");
 
+    /* Full-width ASCII summary first: the binary fields below are 32-bit. */
+    w(h, "\r\nfault64");
+    if (rec != NULL) {
+        whex64(h, "eaddr", (unsigned long long)(uintptr_t)rec->ExceptionAddress);
+        if (rec->NumberParameters >= 2) {
+            whex64(h, "inf1", (unsigned long long)rec->ExceptionInformation[1]);
+        }
+    }
+    if (ctx != NULL) {
+        whex64(h, "eip",  (unsigned long long)NW_CTX_IP(ctx));
+        whex64(h, "esp",  (unsigned long long)NW_CTX_SP(ctx));
+        whex64(h, "ebp",  (unsigned long long)NW_CTX_BP(ctx));
+        whex64(h, "eax",  (unsigned long long)NW_CTX_AX(ctx));
+        whex64(h, "ebx",  (unsigned long long)NW_CTX_BX(ctx));
+        whex64(h, "ecx",  (unsigned long long)NW_CTX_CX(ctx));
+        whex64(h, "edx",  (unsigned long long)NW_CTX_DX(ctx));
+        whex64(h, "esi",  (unsigned long long)NW_CTX_SI(ctx));
+        whex64(h, "edi",  (unsigned long long)NW_CTX_DI(ctx));
+    }
+    w(h, "\r\n");
+
     if (rec != NULL) {
         wlabel(h, "code", (unsigned long)rec->ExceptionCode);
         wlabel(h, "eflags", (unsigned long)rec->ExceptionFlags);
@@ -520,7 +554,7 @@ static void NwDumpFault(HANDLE h, EXCEPTION_RECORD *rec, CONTEXT *ctx)
         return;
 
     wlabel(h, "eip", (unsigned long)NW_CTX_IP(ctx));
-    wres(h, "eipmod", 0, (unsigned long)NW_CTX_IP(ctx));
+    wres(h, "eipmod", 0, (unsigned long long)NW_CTX_IP(ctx));
 
     if (ReadProcessMemory(GetCurrentProcess(), (LPCVOID)(uintptr_t)NW_CTX_IP(ctx),
                           ib, sizeof ib, &got) && got >= 4) {
@@ -543,15 +577,15 @@ static void NwDumpFault(HANDLE h, EXCEPTION_RECORD *rec, CONTEXT *ctx)
     wlabel(h, "esi", (unsigned long)NW_CTX_SI(ctx));
     wlabel(h, "edi", (unsigned long)NW_CTX_DI(ctx));
 
-    wres(h, "eaxmod", 0, (unsigned long)NW_CTX_AX(ctx));
-    wres(h, "ebxmod", 0, (unsigned long)NW_CTX_BX(ctx));
-    wres(h, "ecxmod", 0, (unsigned long)NW_CTX_CX(ctx));
-    wres(h, "edxmod", 0, (unsigned long)NW_CTX_DX(ctx));
-    wres(h, "esimod", 0, (unsigned long)NW_CTX_SI(ctx));
-    wres(h, "edimod", 0, (unsigned long)NW_CTX_DI(ctx));
-    wres(h, "ebpmod", 0, (unsigned long)NW_CTX_BP(ctx));
+    wres(h, "eaxmod", 0, (unsigned long long)NW_CTX_AX(ctx));
+    wres(h, "ebxmod", 0, (unsigned long long)NW_CTX_BX(ctx));
+    wres(h, "ecxmod", 0, (unsigned long long)NW_CTX_CX(ctx));
+    wres(h, "edxmod", 0, (unsigned long long)NW_CTX_DX(ctx));
+    wres(h, "esimod", 0, (unsigned long long)NW_CTX_SI(ctx));
+    wres(h, "edimod", 0, (unsigned long long)NW_CTX_DI(ctx));
+    wres(h, "ebpmod", 0, (unsigned long long)NW_CTX_BP(ctx));
     if (rec != NULL && rec->NumberParameters >= 2)
-        wres(h, "inf1mod", 0, (unsigned long)rec->ExceptionInformation[1]);
+        wres(h, "inf1mod", 0, (unsigned long long)rec->ExceptionInformation[1]);
 
     if (NW_CTX_SP(ctx) >= 0x1000UL && NW_CTX_SP(ctx) < 0x80000000UL) {
         const unsigned long *sp = (const unsigned long *)(uintptr_t)NW_CTX_SP(ctx);
@@ -562,7 +596,7 @@ static void NwDumpFault(HANDLE h, EXCEPTION_RECORD *rec, CONTEXT *ctx)
         w(h, "]");
 
         for (i = 0; i < 160 && shown < 28; i++) {
-            if (wres(h, NULL, i, sp[i]))
+            if (wres(h, NULL, i, (unsigned long long)sp[i]))
                 shown++;
         }
 
@@ -576,7 +610,9 @@ static void NwDumpFault(HANDLE h, EXCEPTION_RECORD *rec, CONTEXT *ctx)
         }
     }
 
-    {
+    /* Legacy absolute-address snapshot.  Only valid for the low oracle image;
+     * a high image base (the iOS/high-window proxy) would fault on these. */
+    if (nw_guest_base == 0) {
         unsigned long o = *(unsigned long *)(uintptr_t)0x4191E0; /* g_display_object */
         wlabel(h, "sbase",   *(unsigned long *)(uintptr_t)0x419CF8); 
         wlabel(h, "spitch",  *(unsigned long *)(uintptr_t)0x419CFC); 

@@ -136,7 +136,7 @@ NW_DIAG void *AllocatePooledBlock(uint32_t size)
     pEntry = (NwPoolSlabEntry *)(void *)(nw_data_window + 0xfa4u + (dwClass << 3));
 
     if (pEntry->dwFreeHead != 0u) {
-        pHeader = (uint32_t *)(uintptr_t)pEntry->dwFreeHead;
+        pHeader = (uint32_t *)(uintptr_t)nw_guest_to_host(pEntry->dwFreeHead);
         pEntry->dwFreeHead = pHeader[1];
         return PoolReturnAndUnlock((void *)(pHeader + 1));
     }
@@ -151,7 +151,7 @@ NW_DIAG void *AllocatePooledBlock(uint32_t size)
     }
 
     if (pEntry->dwBlockSize + g_dwPoolCursor < 0x10000u) {
-        pBlock = (uint8_t *)(uintptr_t)(g_dwPoolBlockBase + g_dwPoolCursor);
+        pBlock = (uint8_t *)(uintptr_t)nw_guest_to_host(g_dwPoolBlockBase + g_dwPoolCursor);
         g_dwPoolCursor += pEntry->dwBlockSize;
         *(uint32_t *)(void *)pBlock = (uint32_t)(uintptr_t)pEntry;
         return PoolReturnAndUnlock((void *)(pBlock + 4));
@@ -167,7 +167,8 @@ NW_DIAG void *AllocatePooledBlock(uint32_t size)
     }
 
     g_dwPoolCursor = 0u;
-    pBlock = (uint8_t *)(uintptr_t)(g_dwPoolBlockBase + g_dwPoolCursor);
+    pBlock = (uint8_t *)(uintptr_t)nw_guest_to_host(
+        g_dwPoolBlockBase + g_dwPoolCursor);
     g_dwPoolCursor += pEntry->dwBlockSize;
     *(uint32_t *)(void *)pBlock = (uint32_t)(uintptr_t)pEntry;
     return PoolReturnAndUnlock((void *)(pBlock + 4));
@@ -275,7 +276,7 @@ uint32_t GetPooledBlockUsableSize(void *block)
 {
     /* The slab header stores the descriptor pointer in one 32-bit guest word. */
     const uint32_t *descriptor = (const uint32_t *)(uintptr_t)
-        (*(const uint32_t *)((const uint8_t *)block - 4));
+        nw_guest_to_host(*(const uint32_t *)((const uint8_t *)block - 4));
     return descriptor[1] - 4u;
 }
 #endif /* NW_UNIT_GetPooledBlockUsableSize */

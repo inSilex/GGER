@@ -366,7 +366,7 @@ def main() -> int:
     ap.add_argument("--root", type=Path, default=Path(__file__).resolve().parent.parent)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--globals", type=Path, default=None)
-    ap.add_argument("--platform", choices=("windows", "linux", "android"),
+    ap.add_argument("--platform", choices=("windows", "linux", "android", "ios"),
                     default="windows")
     args = ap.parse_args()
     root = args.root.resolve()
@@ -394,6 +394,9 @@ def main() -> int:
     elif args.platform == "android":
         platform_files = [platform_root / "linux" / "linux_compat.c",
                           platform_root / "android" / "android_main.c"]
+    elif args.platform == "ios":
+        platform_files = [platform_root / "linux" / "linux_compat.c",
+                          platform_root / "ios" / "ios_main.c"]
     else:
         platform_files = [root / "windows" / "win64_compat.c",
                           root / "windows" / "win64_entry.c"]
@@ -401,7 +404,7 @@ def main() -> int:
     decls = parse_decls(all_files, set(globals_map))
     asm_map = collect_asm_symbols(all_files)
     c_aliases = collect_c_aliases(all_files)
-    if args.platform in ("linux", "android"):
+    if args.platform in ("linux", "android", "ios"):
         # linux_compat.c contains real WinGet* thunk functions; the Windows
         # wrappers are not aliases in the native build.
         for key in ("WinGetCurrentThreadId", "WinGetEnvironmentStringsA",
@@ -441,7 +444,8 @@ def main() -> int:
         write(out / rel, "".join(lines))
     for p in platform_files:
         text = strip_attributes(strip_asm(read(p)),
-                                keep_constructors=(args.platform in ("linux", "android")))
+                                keep_constructors=(args.platform in
+                                                   ("linux", "android", "ios")))
         for alias, target in c_aliases.items():
             text = re.sub(r"\b" + re.escape(alias) + r"\b", target, text)
         if p.name == "win64_compat.c":
@@ -474,6 +478,8 @@ def main() -> int:
         "#include <stdint.h>",
         "#include <stddef.h>",
         "#include <string.h>",
+        "/* Guest/host address-space seam (nw_guest_base, nw_guest_to_host). */",
+        "#include \"nwarch.h\"",
         "#ifdef _MSC_VER",
         "#include <intrin.h>",
         "#define __builtin_memcpy memcpy",
@@ -532,6 +538,11 @@ def main() -> int:
         c_bytes(data),
         "};",
         "",
+        "/* Guest-window base.  Zero for every layout whose window lives below",
+        " * 4 GiB (the original i686 image and the Linux/Android low builds);",
+        " * the 4 GiB-aligned high-image proxy and iOS use a non-zero base. */",
+        "uintptr_t nw_guest_base = 0;",
+        "",
         "static const NwWindowFixup nw_window_fixups[] = {",
         "\n".join(fix_lines),
         "};",
@@ -539,6 +550,10 @@ def main() -> int:
         "void NwWindowApplyFixups(void)",
         "{",
         "    unsigned i;",
+        "    /* The window is always 4 GiB-aligned in guest terms: truncating to a",
+        "     * 32-bit word yields the guest offset, so the base is the high part",
+        "     * of the window address.  It is zero for every low layout. */",
+        "    nw_guest_base = (uintptr_t)nw_data_window & ~(uintptr_t)0xFFFFFFFFu;",
         "    for (i = 0; i < sizeof nw_window_fixups / sizeof nw_window_fixups[0]; i++) {",
         "        uintptr_t v = (uintptr_t)nw_window_fixups[i].value;",
         "        *(uint32_t *)(void *)(nw_data_window + nw_window_fixups[i].offset) = (uint32_t)v;",

@@ -397,7 +397,7 @@ uint32_t __stdcall DispatchScriptOpcode(uint8_t *pCursor)
         }
 
         case 0x12:
-            vm.esi = nw_vm_pop(&vm);
+            vm.esi = (uintptr_t)nw_guest_to_host(nw_vm_pop(&vm));
             vm.esi += 4u;
             trace_next = 0u;
             break;
@@ -406,7 +406,7 @@ uint32_t __stdcall DispatchScriptOpcode(uint8_t *pCursor)
             vm.ecx = ret;
             vm.sp = (uint8_t *)((intptr_t)vm.sp +
                                 (int32_t)nw_ld32((const void *)vm.esi));
-            vm.esi = (uintptr_t)ret + 4u;
+            vm.esi = (uintptr_t)nw_guest_to_host(ret) + 4u;
             trace_next = 0u;
             break;
         }
@@ -504,11 +504,11 @@ uint32_t __stdcall DispatchScriptOpcode(uint8_t *pCursor)
             trace_next = 1u;
             break;
         case 0x27:                              /* *(u8*)edx = al */
-            *(uint8_t *)(uintptr_t)vm.edx = (uint8_t)vm.eax;
+            *(uint8_t *)(uintptr_t)nw_guest_to_host(vm.edx) = (uint8_t)vm.eax;
             trace_next = 1u;
             break;
         case 0x28:                              /* *(u32*)edx = eax */
-            nw_st32((void *)(uintptr_t)vm.edx, vm.eax);
+            nw_st32((void *)(uintptr_t)nw_guest_to_host(vm.edx), vm.eax);
             trace_next = 1u;
             break;
         case 0x29:                              /* eax <<= 2 */
@@ -575,11 +575,11 @@ uint32_t __stdcall DispatchScriptOpcode(uint8_t *pCursor)
             break;
         case 0x33:                              /* eax = sign-extended byte at eax */
             vm.eax = (uint32_t)(int32_t)(int8_t)
-                *(const uint8_t *)(uintptr_t)vm.eax;
+                *(const uint8_t *)(uintptr_t)nw_guest_to_host(vm.eax);
             trace_next = 1u;
             break;
         case 0x34:                              /* eax = dword at eax */
-            vm.eax = nw_ld32((const void *)(uintptr_t)vm.eax);
+            vm.eax = nw_ld32((const void *)(uintptr_t)nw_guest_to_host(vm.eax));
             trace_next = 1u;
             break;
 
@@ -671,7 +671,7 @@ typedef struct NwFrameCtl {
  */
 static uint8_t *NwLoadGuestPointer(const void *pEntry)
 {
-    return (uint8_t *)(uintptr_t)*(const uint32_t *)pEntry;
+    return (uint8_t *)(uintptr_t)nw_guest_to_host(*(const uint32_t *)pEntry);
 }
 
 #ifdef NW_DEBUG_TOOLS
@@ -711,20 +711,23 @@ ExecuteOpcodeAndStoreOperand(uint32_t arg1_operand, uint32_t arg2_addend,
     case 0x12:
         /* Publish the operand as the frame-control record, stamp its divisor
          * byte from the latched frame divisor, then re-arm the frame timer. */
-        g_pVmFrameCtlRecord = (NwFrameCtl *)(uintptr_t)arg1_operand;
-        ((uint8_t *)(uintptr_t)arg1_operand)[1] = g_bLastDivisor;
+        g_pVmFrameCtlRecord = (NwFrameCtl *)(uintptr_t)nw_guest_to_host(arg1_operand);
+        ((uint8_t *)(uintptr_t)nw_guest_to_host(arg1_operand))[1] = g_bLastDivisor;
         (void)SetFrameIntervalFromDivisor(g_bLastDivisor);
         break;
 
     case 0x18:
         /* Refresh the 16-byte record selected by arg5. */
-        p = g_pVmRecordArray30c + (uint32_t)arg5_slot * 16u;
+        /* +0x630c carries a guest base (save-file record array); widen it. */
+        p = (uint8_t *)(uintptr_t)nw_guest_to_host(
+            (uint32_t)(uintptr_t)g_pVmRecordArray30c +
+            (uint32_t)arg5_slot * 16u);
         *(uint32_t *)(void *)(p + 0)  = (uint32_t)(uintptr_t)g_pColorTableBlock;
         *(uint32_t *)(void *)(p + 4)  = g_dwVmStreamField16dc;
         *(uint32_t *)(void *)(p + 8)  = 0;
         *(uint32_t *)(void *)(p + 12) = 0;
         if (g_dwVmStreamField16e0 == 0xffffffffu &&
-            (*(const uint32_t *)(const void *)(uintptr_t)arg1_operand & 0x80000000u) != 0u) {
+            (*(const uint32_t *)(const void *)(uintptr_t)nw_guest_to_host(arg1_operand) & 0x80000000u) != 0u) {
             g_dwVmStreamField16e0 = arg5_slot;
         }
         break;
@@ -769,8 +772,9 @@ ExecuteOpcodeAndStoreOperand(uint32_t arg1_operand, uint32_t arg2_addend,
         break;
 
     case 0x2a:
-        *(uint32_t *)(void *)(*(uint32_t *)(const void *)
-            (g_pVmStateTable + (uint32_t)arg5_slot * 16u + 8u) +
+        *(uint32_t *)(void *)((uintptr_t)nw_guest_to_host(
+            *(const uint32_t *)(const void *)
+            (g_pVmStateTable + (uint32_t)arg5_slot * 16u + 8u)) +
             (uint32_t)arg4_index * 4u) = arg1_operand;
         break;
 
@@ -833,8 +837,9 @@ ExecuteOpcodeAndStoreOperand(uint32_t arg1_operand, uint32_t arg2_addend,
     case 0x42: {
         uint8_t *pEntry = g_pVmRefTable300 + (uint32_t)arg5_slot * 8u;
         if (pEntry[0] == 0u && pEntry[2] > 1u) {
-            *(uint32_t *)(void *)(*(uint32_t *)(const void *)(pEntry + 4) +
-                                  (uint32_t)arg4_index * 4u) = arg1_operand;
+            *(uint32_t *)(void *)((uintptr_t)nw_guest_to_host(
+                *(const uint32_t *)(const void *)(pEntry + 4)) +
+                (uint32_t)arg4_index * 4u) = arg1_operand;
         } else {
             *(uint32_t *)(void *)(pEntry + 4) = arg1_operand;
         }
@@ -976,7 +981,7 @@ ExecuteOpcodeStream(uint32_t dwMode, uint32_t dwStream)
 NW_DIAG int __stdcall
 ExecuteOpcodeStream(uint32_t dwMode, uint32_t dwStream)
 {
-    uint32_t *cursor = (uint32_t *)(uintptr_t)dwStream;
+    uint32_t *cursor = (uint32_t *)(uintptr_t)nw_guest_to_host(dwStream);
     uint32_t *blockEnd;
     uint32_t  blockHeader;
     uint32_t  topFlags;
@@ -1022,7 +1027,7 @@ ExecuteOpcodeStream(uint32_t dwMode, uint32_t dwStream)
     topFlags = *cursor++;
     if ((topFlags & 1u) != 0u) {
         /* The stream slot holds the script pointer itself, not its address. */
-        if (DispatchScriptOpcode((uint8_t *)(uintptr_t)(*cursor)) == 0u) {
+        if (DispatchScriptOpcode((uint8_t *)(uintptr_t)nw_guest_to_host(*cursor)) == 0u) {
             return 0;
         }
         cursor++;
@@ -1095,13 +1100,13 @@ ExecuteOpcodeStream(uint32_t dwMode, uint32_t dwStream)
                          * as low host addresses, so widen four bytes rather
                          * than reading an eight-byte pointer. */
                         uint8_t *keyBits = (uint8_t *)(uintptr_t)
-                            (*(uint32_t *)(void *)entry);
+                            nw_guest_to_host(*(uint32_t *)(void *)entry);
                         uint32_t mask = 1u << (cellIndex & 7u);
 
                         if (keyBits != NULL &&
                             (keyBits[cellIndex >> 3] & mask) != 0u) {
                             uint8_t *handlers = (uint8_t *)(uintptr_t)
-                                (*(uint32_t *)(void *)(entry + 8));
+                                nw_guest_to_host(*(uint32_t *)(void *)(entry + 8));
                             if (handlers != NULL) {
                                 uint8_t newByte1 =
                                     (uint8_t)((oldByte1 & 0x0fu) |
@@ -1189,7 +1194,7 @@ phase_two:
         if (ctx != NULL) {
             savedSlot = ctx[5];
         }
-        (void)DispatchScriptOpcode((uint8_t *)(uintptr_t)(*cursor));
+        (void)DispatchScriptOpcode((uint8_t *)(uintptr_t)nw_guest_to_host(*cursor));
         cursor++;
 
         ctx = (uint8_t *)(uintptr_t)G_CUR_CTX;
@@ -1419,12 +1424,15 @@ typedef unsigned char byte;
 
 extern uint8_t __stdcall DispatchScriptOpcode(byte *pCursor);
 
-extern uint32_t g_vmContextD; /* installed from arg 6 (dwCtxD) */
+/* g_vmContextD aliases the NW_CTX_D side-table entry (window slot 0x6214) and
+ * g_vmContextA aliases g_pVmBaseB (window slot 0x63e8): both are native host
+ * pointers in the portable build, so they must stay pointer-width. */
+extern uintptr_t g_vmContextD; /* installed from arg 6 (dwCtxD) */
 extern uint32_t g_vmContextC; /* installed from arg 5 (dwCtxC); its OLD value is passed as DispatchScriptOpcode arg2 */
 extern uint32_t g_vmContextB; /* installed from arg 4 (dwCtxB) *//* = arg 3 (bOperandB), zero-extended */
 /* = arg 2 (bOperandA), zero-extended */
 
-extern uint32_t g_vmContextA; /* VM context word that DispatchScriptOpcode reads */
+extern uintptr_t g_vmContextA; /* g_pVmBaseB: VM context word DispatchScriptOpcode binds */
 extern uint8_t  g_vmModeFlag; /* byte flag, installed from arg 1 (bFlag); its OLD value is passed as DispatchScriptOpcode arg1 */
 
 #define NW_CTX_C NW_WINDOW_PTR_VALUE(0x6218)
@@ -1447,14 +1455,14 @@ void ExecuteScriptInstruction(byte bFlag, byte bOperandA, byte bOperandB,
     uint32_t savedOperandA = g_vmOperandA;
     uint32_t savedOperandBKey = g_vmOperandBKey;
     uint32_t savedOperandAKey = g_vmOperandAKey;
-    uint32_t savedContextA = g_vmContextA;
+    uintptr_t savedContextA = g_vmContextA;
     uint8_t  savedModeFlag = g_vmModeFlag;
 
     /* Install the new VM context from the arguments. */
-    NW_CTX_D = (uintptr_t)dwCtxD;
-    NW_CTX_C = (uintptr_t)dwCtxC;
+    NW_CTX_D = (uintptr_t)nw_guest_to_host(dwCtxD);
+    NW_CTX_C = (uintptr_t)nw_guest_to_host(dwCtxC);
     g_vmContextB = dwCtxB;
-    g_vmContextA = dwCtxA;
+    g_vmContextA = (uintptr_t)nw_guest_to_host(dwCtxA);
     g_vmOperandB = bOperandB;   /* zero-extended byte */
     g_vmOperandBKey = bOperandB;
     g_vmOperandA = bOperandA;
@@ -1643,7 +1651,7 @@ NW_DIAG uint8_t InterpretOpcodeStreamUntilEnd(void)
         case 0x40u: {
             NWP32(0x16c8) = 4u;
             G_VM_SAVED_PTR = G_VM_RECORD_PTR;
-            (void)MoveMemoryRegion((void *)(uintptr_t)G_VM_RECORD_ADDR,
+            (void)MoveMemoryRegion((void *)(uintptr_t)nw_guest_to_host(G_VM_RECORD_ADDR),
                                    cursor, 4u);
             cursor += 4;
             relocateFlag = 0;
@@ -1656,7 +1664,7 @@ NW_DIAG uint8_t InterpretOpcodeStreamUntilEnd(void)
             cursor += 4;
             NWP32(0x16c8) = length;
             G_VM_SAVED_PTR = G_VM_RECORD_PTR;
-            (void)MoveMemoryRegion((void *)(uintptr_t)G_VM_RECORD_ADDR,
+            (void)MoveMemoryRegion((void *)(uintptr_t)nw_guest_to_host(G_VM_RECORD_ADDR),
                                    cursor, length);
             cursor += length;
             break;
@@ -1668,7 +1676,7 @@ NW_DIAG uint8_t InterpretOpcodeStreamUntilEnd(void)
 
             NWP32(0x16c8) = 0x10u;
             G_VM_SAVED_PTR = G_VM_RECORD_PTR;
-            (void)MoveMemoryRegion((void *)(uintptr_t)G_VM_RECORD_ADDR,
+            (void)MoveMemoryRegion((void *)(uintptr_t)nw_guest_to_host(G_VM_RECORD_ADDR),
                                    cursor, 0x10u);
             cursor += 0x10;
 
@@ -1719,8 +1727,8 @@ NW_DIAG uint8_t InterpretOpcodeStreamUntilEnd(void)
         }
 
         if (relocateFlag != 0u) {
-            G_VM_RECORD_PTR = (uint8_t *)(uintptr_t)
-                AllocateHeapCursorBlock(NWP32(0x16c8));
+            G_VM_RECORD_PTR = (uint8_t *)(uintptr_t)nw_guest_to_host(
+                AllocateHeapCursorBlock(NWP32(0x16c8)));
         }
 
 loop_test:

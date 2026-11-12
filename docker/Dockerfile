@@ -121,6 +121,8 @@ ARG PS5_SDK_VERSION=v0.45
 ARG PS5_SDK_SHA256=5fac64093d0e3e69f2584ce7935f24f703f622d9681f1495c85b9f00d1291a2c
 ARG PS5_LLVM_APT_SUITE=noble
 ARG PS5_LLVM_VERSION=20
+ARG COMPILER_RT_VERSION=20.1.8
+ARG COMPILER_RT_SHA256=15277402f6fd63397c0917a5c7171cda82d16d226094b828c1ed0f58f73b9c69
 
 RUN wget -qO /etc/apt/trusted.gpg.d/llvm.asc \
         https://apt.llvm.org/llvm-snapshot.gpg.key \
@@ -140,6 +142,44 @@ RUN wget -qO /etc/apt/trusted.gpg.d/llvm.asc \
     && ln -s /usr/lib/x86_64-linux-gnu \
         /opt/llvm20/root/usr/lib/x86_64-linux-gnu \
     && ln -s /usr/lib/llvm-20 /opt/llvm20/root/usr/lib/llvm-20
+
+# iOS cross-build helpers.  The Apple SDK itself is not part of the image; the
+# release wrapper mounts a user-supplied .xip or SDK directory at runtime.
+# apple-codesign (rcodesign) is a static Rust binary used for optional ad-hoc
+# or certificate signing of the .app/.ipa; it needs no host Apple tooling.
+ARG RCODESIGN_VERSION=0.29.0
+ARG RCODESIGN_SHA256=dbe85cedd8ee4217b64e9a0e4c2aef92ab8bcaaa41f20bde99781ff02e600002
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        cpio \
+        libarchive-tools \
+        llvm-20-dev \
+        lzfse \
+        rsync \
+        zip \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN wget -q \
+        "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign/${RCODESIGN_VERSION}/apple-codesign-${RCODESIGN_VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+        -O /tmp/rcodesign.tar.gz \
+    && echo "${RCODESIGN_SHA256}  /tmp/rcodesign.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/rcodesign.tar.gz -C /tmp \
+    && install -m 0755 \
+        "/tmp/apple-codesign-${RCODESIGN_VERSION}-x86_64-unknown-linux-musl/rcodesign" \
+        /usr/local/bin/rcodesign \
+    && rm -rf /tmp/rcodesign.tar.gz \
+        "/tmp/apple-codesign-${RCODESIGN_VERSION}-x86_64-unknown-linux-musl"
+
+RUN wget -q \
+        "https://github.com/llvm/llvm-project/releases/download/llvmorg-${COMPILER_RT_VERSION}/compiler-rt-${COMPILER_RT_VERSION}.src.tar.xz" \
+        -O /tmp/compiler-rt.tar.xz \
+    && echo "${COMPILER_RT_SHA256}  /tmp/compiler-rt.tar.xz" | sha256sum -c - \
+    && mkdir -p /opt/compiler-rt \
+    && tar -xJf /tmp/compiler-rt.tar.xz -C /opt/compiler-rt --strip-components=1 \
+    && rm -f /tmp/compiler-rt.tar.xz
+
+ENV NW_COMPILER_RT_SRC=/opt/compiler-rt
 
 RUN wget -q \
         "https://github.com/ps5-payload-dev/sdk/releases/download/${PS5_SDK_VERSION}/ps5-payload-sdk.zip" \

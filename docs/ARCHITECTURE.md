@@ -43,8 +43,8 @@ source tree at configure time. It:
 - resolves the checked-in data-window bridge in `baseline/window_snapshot.s`;
 - emits pointer-side-table accessors and the fixed global layout;
 - removes inline assembly and adds C replacements where required;
-- maps Windows compatibility calls to `platforms/linux/linux_compat.c` on Linux
-  and PS5;
+- maps Windows compatibility calls to `platforms/linux/linux_compat.c` on Linux,
+  Android, iOS, and PS5;
 - emits `windows/` or `linux/` glue in the portable build tree according to the
   target.
 
@@ -57,10 +57,17 @@ data-window image. The loader must leave `nw_data_window` at `0x418030`; the
 32-bit fields inside it are part of the recovered ABI. Native 64-bit pointers
 are stored in side tables so the guest words remain four bytes.
 
+Targets that cannot obtain memory below 4 GiB (iOS arm64) use a single
+4 GiB-aligned guest window above 4 GiB. Guest addresses become offsets from
+`nw_guest_base`, and every guest allocation is scanned into that window. The
+model, its conversion rules, and the Windows high-image validation history are
+documented in [PORTABLE_64BIT.md](PORTABLE_64BIT.md).
+
 ## Platform layers
 
 Platform-specific source lives under `platforms/linux/`, `platforms/android/`,
-and `platforms/ps5/`; the Windows compatibility layer remains under `windows/`.
+`platforms/ios/`, and `platforms/ps5/`; the Windows compatibility layer remains
+under `windows/`.
 
 ### Desktop
 
@@ -74,6 +81,22 @@ and `platforms/ps5/`; the Windows compatibility layer remains under `windows/`.
 - `src/video/sdl3/VideoSdl.c` owns the 8-bit software framebuffer, palette
   conversion, presentation, 4:3 viewport, and optional snapshots.
 - `src/audio/sdl3/` implements the SDL3 MIDI/PCM paths.
+
+### iOS
+
+- `platforms/ios/ios_main.c` is the SDL entry point. It resolves the read-only
+  bundle and writable preference directory, stages `overlay.nw` and `gm.sf2`
+  into the latter, and points the Win32-compatible path layer at a synthetic
+  `NETWALK.EXE` there.
+- `platforms/ios/ios_memory.c` maps and protects the guest arena through Mach
+  VM. With a non-zero `nw_guest_base` it allocates inside the 4 GiB-aligned
+  guest window above 4 GiB; with a low link it keeps the sub-4 GiB path used
+  by the probe. See [PORTABLE_64BIT.md](PORTABLE_64BIT.md).
+- `platforms/linux/linux_compat.c` supplies the same Win32 compatibility layer
+  as the other POSIX ports, with Darwin semaphore and memory branches.
+- `cmake/toolchain-ios.cmake` and `cmake/ios.cmake` drive the Clang/LLD
+  cross-build; `cmake/ios/app-bundle.cmake` writes the `.app`, signs it, and
+  packages the `.ipa`.
 
 ### PlayStation 5
 

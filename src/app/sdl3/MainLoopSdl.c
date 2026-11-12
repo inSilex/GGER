@@ -1174,7 +1174,7 @@ NW_SDL_CODE static void nw_input_text(const char *pszText)
     }
 }
 
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
 /* SDL turns a touch contact into a synthetic left-button event.  Route that
  * event through the selected click mode while leaving a real mouse or pen
  * untouched. */
@@ -1265,7 +1265,7 @@ NW_SDL_CODE static int nw_handle_sdl_event(const SDL_Event *pEvent)
         return 0;
 
     case SDL_EVENT_MOUSE_MOTION:
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
         if (NwSdlAndroidControlPressed() != 0)
             return 0;
 #endif
@@ -1283,17 +1283,41 @@ NW_SDL_CODE static int nw_handle_sdl_event(const SDL_Event *pEvent)
         return 0;
 
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
-#if defined(__ANDROID__)
-        /* The Android-only controls live in the letterbox bars.  Check them
-         * before the viewport mapping, and consume synthetic touch mouse
-         * events so a button tap never reaches the game. */
-        if (pEvent->button.button == SDL_BUTTON_LEFT) {
-            int control = NwSdlAndroidControlHit((int)pEvent->button.x,
-                                                (int)pEvent->button.y);
-            if (control != 0) {
-                NwSdlAndroidControlPress(control);
-                NwSdlVideoPresentNow();
-                return 0;
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+        {
+            int mx = (int)pEvent->button.x;
+            int my = (int)pEvent->button.y;
+            int control = NwSdlAndroidControlHit(mx, my);
+
+            /* A tap or click anywhere except on the KEYBOARD toggle dismisses
+             * the on-screen keyboard.  Tapping the toggle itself lets its
+             * release path hide the keyboard through the normal toggle. */
+            if (control != NW_ANDROID_CONTROL_KEYBOARD)
+                (void)NwSdlAndroidHideKeyboard();
+
+            if (pEvent->button.button == SDL_BUTTON_LEFT) {
+                if (control != 0) {
+                    NwSdlAndroidControlPress(control);
+                    NwSdlVideoPresentNow();
+                    return 0;
+                }
+                if (NwSdlAndroidControlCardProgress() > 0) {
+                    if (NwSdlAndroidControlHandleHit(mx, my)) {
+                        NwSdlAndroidControlCardToggle();
+                        NwSdlVideoPresentNow();
+                        return 0;
+                    }
+                    if (NwSdlAndroidControlCardHit(mx, my))
+                        return 0;
+                    NwSdlAndroidControlCardClose();
+                    NwSdlVideoPresentNow();
+                    return 0;
+                }
+                if (NwSdlAndroidControlHandleHit(mx, my)) {
+                    NwSdlAndroidControlCardToggle();
+                    NwSdlVideoPresentNow();
+                    return 0;
+                }
             }
         }
 #endif
@@ -1304,7 +1328,7 @@ NW_SDL_CODE static int nw_handle_sdl_event(const SDL_Event *pEvent)
             int bRight;
             int bInside;
 
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
             button = nw_android_touch_button(&pEvent->button);
 #endif
             if (button == SDL_BUTTON_LEFT || button == SDL_BUTTON_RIGHT) {
@@ -1331,7 +1355,7 @@ NW_SDL_CODE static int nw_handle_sdl_event(const SDL_Event *pEvent)
         return 0;
 
     case SDL_EVENT_MOUSE_BUTTON_UP:
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
         if (pEvent->button.button == SDL_BUTTON_LEFT &&
             NwSdlAndroidControlPressed() != 0) {
             int action = NwSdlAndroidControlRelease((int)pEvent->button.x,
@@ -1357,7 +1381,7 @@ NW_SDL_CODE static int nw_handle_sdl_event(const SDL_Event *pEvent)
             int bRight;
             int bDownInside;
 
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
             button = nw_android_touch_button(&pEvent->button);
 #endif
             if (button == SDL_BUTTON_LEFT || button == SDL_BUTTON_RIGHT) {
@@ -1384,7 +1408,7 @@ NW_SDL_CODE static int nw_handle_sdl_event(const SDL_Event *pEvent)
         }
         return 0;
 
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
     case SDL_EVENT_FINGER_CANCELED:
         if (NwSdlAndroidControlPressed() != 0) {
             NwSdlAndroidControlCancel();
@@ -1402,7 +1426,7 @@ NW_SDL_CODE static int nw_handle_sdl_event(const SDL_Event *pEvent)
             return 0;
 
 #if !defined(NW_PORTABLE_PS5) && !defined(NW_PS5_NATIVE_TITLE) && \
-    !defined(__ANDROID__)
+    !defined(__ANDROID__) && !defined(NW_PORTABLE_IOS)
         /* PC fullscreen hotkey.  The typed-token field uses F as game input,
          * so leave it alone while that mode is active. */
         if (vk == 'F') {
@@ -1418,10 +1442,10 @@ NW_SDL_CODE static int nw_handle_sdl_event(const SDL_Event *pEvent)
         }
 #endif
 
-#if !defined(__ANDROID__)
+#if !defined(__ANDROID__) && !defined(NW_PORTABLE_IOS)
         /* Global asset-mode hotkey.  The typed-token field uses H as game
-         * input, so leave it alone while that mode is active.  Android ships
-         * the standard overlay, so H remains ordinary text there. */
+         * input, so leave it alone while that mode is active.  Android and
+         * iOS ship the standard overlay, so H remains ordinary text there. */
         if (vk == 'H') {
             if (NW8(W_FIELD_MODE) == 0u) {
                 g_nwAssetHSuppressText = 1;
@@ -1694,6 +1718,13 @@ RunMainMessageLoop(HINSTANCE hInstance, HINSTANCE hPrevInstance,
         }
 
         nw_pointer_update();
+
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+        /* Keep the pull-down card animating and auto-close it even while the
+         * game is idle and producing no new drawing. */
+        if (NwSdlAndroidControlCardTick())
+            NwSdlVideoPresentNow();
+#endif
 
         dwNow = (DWORD)SDL_GetTicks();
         if ((uint32_t)(NW32(W_LAST_FRAME_TIME) + NW32(W_FRAME_INTERVAL)) >= dwNow) {

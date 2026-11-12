@@ -38,9 +38,14 @@
 #include <pthread.h>
 #include <semaphore.h>
 #include <dirent.h>
-#if !defined(__PROSPERO__) && !defined(__ANDROID__)
+#if !defined(__PROSPERO__) && !defined(__ANDROID__) && \
+    !defined(NW_PORTABLE_IOS)
 #include <malloc.h>
 #include <ucontext.h>
+#endif
+
+#if defined(NW_PORTABLE_IOS)
+#include "ios_memory.h"
 #endif
 
 /* FreeBSD's mmap has MAP_EXCL rather than Linux's MAP_FIXED_NOREPLACE.
@@ -94,11 +99,12 @@ FILE *stderr = NULL;
  * several engine fields store heap pointers in uint32_t, and the original
  * Windows heap lives below 2 GB.  Without this, glibc serves large blocks from
  * high-address mmap regions and the trace's pointer gate rejects them. */
-#if !defined(__PROSPERO__) && !defined(__ANDROID__)
+#if !defined(__PROSPERO__) && !defined(__ANDROID__) && \
+    !defined(NW_PORTABLE_IOS)
 /* glibc keeps large allocations below 2 GiB for the 32-bit guest pointer
  * fields.  The PS5's FreeBSD libc has no mallopt, Bionic's allocator does not
- * expose M_MMAP_THRESHOLD, and Android relies on the low-address mmap arena
- * below instead. */
+ * expose M_MMAP_THRESHOLD, Darwin has no mallopt, and Android/iOS rely on the
+ * low-address arena below instead. */
 static void __attribute__((constructor)) nw_init_malloc(void)
 {
     (void)mallopt(M_MMAP_THRESHOLD, 0x40000000);
@@ -115,7 +121,8 @@ static void __attribute__((constructor)) nw_init_stderr(void)
 }
 #endif
 
-#if !defined(__PROSPERO__) && !defined(__ANDROID__)
+#if !defined(__PROSPERO__) && !defined(__ANDROID__) && \
+    !defined(NW_PORTABLE_IOS)
 /*
  * For the optional fully static build, libX11 still tries to load
  * libXcursor.so.1 from XCreateGlyphCursor.  A static-glibc process that drags
@@ -229,7 +236,7 @@ static void __attribute__((constructor)) nw_install_fault_reporter(void)
     sigaction(SIGILL, &sa, NULL);
     sigaction(SIGFPE, &sa, NULL);
 }
-#endif /* !__PROSPERO__ && !__ANDROID__ */
+#endif /* !__PROSPERO__ && !__ANDROID__ && !NW_PORTABLE_IOS */
 
 /* ------------------------------------------------------------------ */
 /* Process-wide paths and command line                                */
@@ -384,11 +391,153 @@ enum {
     NW_HANDLE_FIND
 };
 
+/*
+ * Darwin, including iOS, does not implement unnamed POSIX semaphores
+ * (sem_init fails with ENOSYS).  Use a mutex/condition counter there; the
+ * other POSIX targets keep sem_t so their behaviour is unchanged.
+ */
+#if defined(NW_PORTABLE_IOS)
+typedef struct NwSem {
+    pthread_mutex_t mutex;
+    pthread_cond_t cond;
+    long count;
+} NwSem;
+
+static int nw_sem_init(NwSem *p, long value)
+{
+    if (pthread_mutex_init(&p->mutex, NULL) != 0) {
+        return -1;
+    }
+    if (pthread_cond_init(&p->cond, NULL) != 0) {
+        pthread_mutex_destroy(&p->mutex);
+        return -1;
+    }
+    p->count = value;
+    return 0;
+}
+
+static void nw_sem_destroy(NwSem *p)
+{
+    pthread_cond_destroy(&p->cond);
+    pthread_mutex_destroy(&p->mutex);
+}
+
+static long nw_sem_value(NwSem *p)
+{
+    long value;
+
+    pthread_mutex_lock(&p->mutex);
+    value = p->count;
+    pthread_mutex_unlock(&p->mutex);
+    return value;
+}
+
+static void nw_sem_post(NwSem *p)
+{
+    pthread_mutex_lock(&p->mutex);
+    p->count++;
+    pthread_cond_signal(&p->cond);
+    pthread_mutex_unlock(&p->mutex);
+}
+
+static DWORD nw_sem_wait(NwSem *p, DWORD dwMilliseconds)
+{
+    struct timespec ts;
+    DWORD result = WAIT_OBJECT_0;
+
+    if (pthread_mutex_lock(&p->mutex) != 0) {
+        return WAIT_FAILED;
+    }
+    if (dwMilliseconds != INFINITE) {
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_sec += (time_t)(dwMilliseconds / 1000);
+        ts.tv_nsec += (long)(dwMilliseconds % 1000) * 1000000L;
+        if (ts.tv_nsec >= 1000000000L) {
+            ts.tv_sec++;
+            ts.tv_nsec -= 1000000000L;
+        }
+    }
+    while (p->count == 0) {
+        int rc;
+        if (dwMilliseconds == INFINITE) {
+            rc = pthread_cond_wait(&p->cond, &p->mutex);
+        } else {
+            rc = pthread_cond_timedwait(&p->cond, &p->mutex, &ts);
+        }
+        if (rc == ETIMEDOUT) {
+            result = WAIT_TIMEOUT;
+            break;
+        }
+        if (rc != 0) {
+            result = WAIT_FAILED;
+            break;
+        }
+    }
+    if (result == WAIT_OBJECT_0) {
+        p->count--;
+    }
+    pthread_mutex_unlock(&p->mutex);
+    return result;
+}
+#else
+typedef sem_t NwSem;
+
+static int nw_sem_init(NwSem *p, long value)
+{
+    return sem_init(p, 0, (unsigned)value);
+}
+
+static void nw_sem_destroy(NwSem *p)
+{
+    sem_destroy(p);
+}
+
+static long nw_sem_value(NwSem *p)
+{
+    int value = 0;
+    sem_getvalue(p, &value);
+    return value;
+}
+
+static void nw_sem_post(NwSem *p)
+{
+    sem_post(p);
+}
+
+static DWORD nw_sem_wait(NwSem *p, DWORD dwMilliseconds)
+{
+    if (dwMilliseconds == INFINITE) {
+        while (sem_wait(p) != 0) {
+            if (errno != EINTR) {
+                return WAIT_FAILED;
+            }
+        }
+        return WAIT_OBJECT_0;
+    } else {
+        struct timespec ts;
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_sec += dwMilliseconds / 1000;
+        ts.tv_nsec += (long)(dwMilliseconds % 1000) * 1000000L;
+        if (ts.tv_nsec >= 1000000000L) {
+            ts.tv_sec++;
+            ts.tv_nsec -= 1000000000L;
+        }
+        while (sem_timedwait(p, &ts) != 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            return (errno == ETIMEDOUT) ? WAIT_TIMEOUT : WAIT_FAILED;
+        }
+        return WAIT_OBJECT_0;
+    }
+}
+#endif
+
 typedef struct NwHandle {
     int kind;
     int fd;
     int standard;              /* static stdio handle, never freed */
-    sem_t sem;
+    NwSem sem;
     pthread_t thread;
     int detached;
     DIR *dir;
@@ -752,7 +901,7 @@ BOOL CloseHandle(HANDLE h)
         }
         return TRUE;
     case NW_HANDLE_SEM:
-        sem_destroy(&nw->sem);
+        nw_sem_destroy(&nw->sem);
         free(nw);
         return TRUE;
     case NW_HANDLE_THREAD:
@@ -796,7 +945,7 @@ HANDLE CreateSemaphoreA(LPSECURITY_ATTRIBUTES lpSA, LONG lInitialCount,
     if (lInitialCount > lMaximumCount) {
         lInitialCount = lMaximumCount;
     }
-    if (sem_init(&h->sem, 0, (unsigned)lInitialCount) != 0) {
+    if (nw_sem_init(&h->sem, lInitialCount) != 0) {
         free(h);
         nw_last_error = 8;
         return NULL;
@@ -807,18 +956,18 @@ HANDLE CreateSemaphoreA(LPSECURITY_ATTRIBUTES lpSA, LONG lInitialCount,
 BOOL ReleaseSemaphore(HANDLE h, LONG lReleaseCount, LPLONG lpPreviousCount)
 {
     NwHandle *nw = (NwHandle *)h;
-    int value = 0;
+    long value;
 
     if (nw == NULL || nw->kind != NW_HANDLE_SEM || lReleaseCount <= 0) {
         nw_last_error = 6;
         return FALSE;
     }
-    sem_getvalue(&nw->sem, &value);
+    value = nw_sem_value(&nw->sem);
     if (lpPreviousCount != NULL) {
         *lpPreviousCount = (LONG)value;
     }
     while (lReleaseCount-- > 0) {
-        sem_post(&nw->sem);
+        nw_sem_post(&nw->sem);
     }
     return TRUE;
 }
@@ -831,30 +980,7 @@ DWORD WaitForSingleObject(HANDLE h, DWORD dwMilliseconds)
         return WAIT_FAILED;
     }
     if (nw->kind == NW_HANDLE_SEM) {
-        if (dwMilliseconds == INFINITE) {
-            while (sem_wait(&nw->sem) != 0) {
-                if (errno != EINTR) {
-                    return WAIT_FAILED;
-                }
-            }
-            return WAIT_OBJECT_0;
-        } else {
-            struct timespec ts;
-            clock_gettime(CLOCK_REALTIME, &ts);
-            ts.tv_sec += dwMilliseconds / 1000;
-            ts.tv_nsec += (long)(dwMilliseconds % 1000) * 1000000L;
-            if (ts.tv_nsec >= 1000000000L) {
-                ts.tv_sec++;
-                ts.tv_nsec -= 1000000000L;
-            }
-            while (sem_timedwait(&nw->sem, &ts) != 0) {
-                if (errno == EINTR) {
-                    continue;
-                }
-                return (errno == ETIMEDOUT) ? WAIT_TIMEOUT : WAIT_FAILED;
-            }
-            return WAIT_OBJECT_0;
-        }
+        return nw_sem_wait(&nw->sem, dwMilliseconds);
     }
     if (nw->kind == NW_HANDLE_THREAD) {
         if (pthread_join(nw->thread, NULL) == 0) {
@@ -1287,8 +1413,8 @@ HMODULE GetModuleHandleA(LPCSTR lpModuleName)
 DWORD GetTempPathA(DWORD nBufferLength, LPSTR lpBuffer)
 {
     const char *tmp;
-#if defined(__ANDROID__)
-    char androidTemp[PATH_MAX + 8];
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+    char appTemp[PATH_MAX + 8];
 #endif
 
 #if defined(__PROSPERO__) && defined(NW_PS5_NATIVE_TITLE)
@@ -1302,19 +1428,20 @@ DWORD GetTempPathA(DWORD nBufferLength, LPSTR lpBuffer)
      * the persistent writable mount (the boot log already lives there), so a
      * repaired save survives a reboot instead of landing in /tmp. */
     tmp = "Z:\\data\\";
-#elif defined(__ANDROID__)
-    /* Android has no /tmp.  Use the app's persistent internal files directory,
-     * which is also the module directory installed by android_main.c. */
+#elif defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+    /* Android and iOS have no writable /tmp shared with the app.  Use the
+     * app directory installed by the platform entry point (internal storage
+     * on Android, SDL_GetPrefPath on iOS). */
     nw_init_module_path();
-    (void)snprintf(androidTemp, sizeof(androidTemp), "%s", g_module_path_win);
+    (void)snprintf(appTemp, sizeof(appTemp), "%s", g_module_path_win);
     {
-        char *slash = strrchr(androidTemp, '\\');
+        char *slash = strrchr(appTemp, '\\');
         if (slash != NULL)
             slash[1] = '\0';
         else
-            androidTemp[0] = '\0';
+            appTemp[0] = '\0';
     }
-    tmp = androidTemp[0] != '\0' ? androidTemp : "Z:\\";
+    tmp = appTemp[0] != '\0' ? appTemp : "Z:\\";
 #else
     tmp = "Z:\\tmp\\";
 #endif
@@ -1728,7 +1855,9 @@ LPVOID VirtualAlloc(LPVOID lpAddress, SIZE_T dwSize, DWORD flAllocationType,
                     DWORD flProtect)
 {
     int prot = PROT_READ | PROT_WRITE;
+#if !defined(NW_PORTABLE_IOS)
     int flags = MAP_PRIVATE | MAP_ANONYMOUS;
+#endif
     void *p;
 
     (void)flAllocationType;
@@ -1739,6 +1868,28 @@ LPVOID VirtualAlloc(LPVOID lpAddress, SIZE_T dwSize, DWORD flAllocationType,
     } else if (flProtect == PAGE_NOACCESS) {
         prot = PROT_NONE;
     }
+#if defined(NW_PORTABLE_IOS)
+    /* Two layouts share this entry point:
+     *
+     *   nw_guest_base == 0  every guest object is below 4 GiB (an explicitly
+     *                       low game link) — use the Mach VM low scan.
+     *   nw_guest_base != 0   the 64-bit guest window above 4 GiB — scan that
+     *                       window so the static data window, heap, and
+     *                       framebuffer share one 32-bit-addressable space.
+     */
+    if (lpAddress != NULL) {
+        p = NwIosAllocLowAt(lpAddress, dwSize, prot);
+    } else if (nw_guest_base != 0) {
+        p = NwIosAllocWindow(nw_guest_base, dwSize, prot);
+    } else {
+        p = NwIosAllocLow(dwSize, prot);
+    }
+    if (p == NULL) {
+        nw_last_error = nw_errno_to_win(errno);
+        return NULL;
+    }
+    return p;
+#else
     if (lpAddress != NULL) {
         flags |= NW_MAP_FIXED_NOREPLACE;
     }
@@ -1756,6 +1907,7 @@ LPVOID VirtualAlloc(LPVOID lpAddress, SIZE_T dwSize, DWORD flAllocationType,
         return NULL;
     }
     return p;
+#endif
 }
 
 BOOL VirtualFree(LPVOID lpAddress, SIZE_T dwSize, DWORD dwFreeType)
@@ -1764,11 +1916,17 @@ BOOL VirtualFree(LPVOID lpAddress, SIZE_T dwSize, DWORD dwFreeType)
     if (lpAddress == NULL) {
         return FALSE;
     }
+#if defined(NW_PORTABLE_IOS)
+    /* dwSize is zero for MEM_RELEASE; the allocator tracks the rounded size. */
+    NwIosFreeLow(lpAddress, dwSize);
+    return TRUE;
+#else
     if (munmap(lpAddress, dwSize) != 0) {
         nw_last_error = nw_errno_to_win(errno);
         return FALSE;
     }
     return TRUE;
+#endif
 }
 
 /* Large host-side buffers (the SDL framebuffer and the game's scratch
@@ -1783,8 +1941,12 @@ void *NwHostAllocLow(size_t size)
 
 void NwHostFreeLow(void *p, size_t size)
 {
+#if defined(NW_PORTABLE_IOS)
+    NwIosFreeLow(p, size);
+#else
     if (p != NULL)
         (void)munmap(p, size);
+#endif
 }
 
 BOOL VirtualProtect(LPVOID lpAddress, SIZE_T dwSize, DWORD flNewProtect,
@@ -1803,10 +1965,17 @@ BOOL VirtualProtect(LPVOID lpAddress, SIZE_T dwSize, DWORD flNewProtect,
     } else if (flNewProtect == PAGE_NOACCESS) {
         prot = PROT_NONE;
     }
+#if defined(NW_PORTABLE_IOS)
+    if (NwIosProtectLow(lpAddress, dwSize, prot) != 0) {
+        nw_last_error = nw_errno_to_win(errno);
+        return FALSE;
+    }
+#else
     if (mprotect(lpAddress, dwSize, prot) != 0) {
         nw_last_error = nw_errno_to_win(errno);
         return FALSE;
     }
+#endif
     return TRUE;
 }
 

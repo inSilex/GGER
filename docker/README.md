@@ -1,15 +1,16 @@
 # Docker release builds
 
 The Docker path builds the GGER/NetWalk Linux and Windows release presets in an
-Ubuntu 24.04 image and stages the resulting playable directories. Native PS5
-and Android packaging are opt-in. The default Docker image (the `netwalk-ps5`
-build stage) bundles a pinned `ps5-payload-dev` SDK, LLVM 20, and the native
-PS5 converter/runtime/makefs tools. Pass `--ps5-sdk` and `--ps5-llvm` together
-to mount an external toolchain instead.
+Ubuntu 24.04 image and stages the resulting playable directories. Native PS5,
+Android, and iOS packaging are opt-in. The default Docker image (the
+`netwalk-ps5` build stage) bundles a pinned `ps5-payload-dev` SDK, LLVM 20, and
+the native PS5 converter/runtime/makefs tools. Pass `--ps5-sdk` and
+`--ps5-llvm` together to mount an external toolchain instead.
 
 The Linux and Windows Docker release path is exercised by default, and the
 native PS5 output is exercised with `--ps5`. Android packaging is exercised
-with the opt-in flags.
+with the opt-in flags. The iOS game is exercised with `--ios` and a
+user-supplied Apple SDK.
 
 ## Quick start
 
@@ -39,6 +40,36 @@ docker/build-releases.sh --android
 
 Without a release key, build a debug-signed APK with
 `docker/build-releases.sh --android-debug`.
+
+iOS is opt-in and needs an Apple SDK supplied by the user; nothing Apple-specific
+is installed on the host. Point `--ios-sdk` (or `NW_IOS_SDK`) at an extracted
+`iPhoneOS.sdk`, an `Xcode.app` tree, or a downloaded `.xip`:
+
+```sh
+# Full game (needs an overlay).
+docker/build-releases.sh --ios --ios-sdk /path/to/Xcode.xip \
+    --overlay /path/to/overlay.nw
+```
+
+The container builds compiler-rt's iOS builtins, compiles the game with
+Clang/LLD, and stages only `ios/NetWalk.ipa`; the intermediate `NetWalk.app`
+stays in the build directory. Extracted SDKs and builtins are cached in
+`NW_IOS_SDK_CACHE` (default
+`~/.cache/netwalk/ios-sdk`). The game bundle contains `overlay.nw`, `gm.sf2`,
+and the icons; `platforms/ios/ios_main.c` copies the data files into the app's
+preference directory at launch because the bundle itself is read-only. The
+game keeps the linker-default 4 GiB `__PAGEZERO`, so the image loads above
+4 GiB inside the 64-bit guest window.
+
+The app is unsigned by default. Signing uses the `rcodesign` bundled in the
+image and is opt-in: `--ios-sign adhoc` writes an ad-hoc signature, while
+`--ios-sign apple --ios-sign-p12 ... [--ios-sign-password-file ...]
+[--ios-provisioning-profile ...] [--ios-entitlements ...]` signs with an Apple
+certificate. With a provisioning profile but no `--ios-entitlements`, the
+build extracts the profile's Entitlements dictionary, expands a wildcard App ID
+to the concrete bundle identifier, and verifies that the profile covers the
+app before signing. Only a correctly signed and provisioned app installs on a
+stock device.
 
 If `assets/overlay.nw` is absent, pass an original `NETWALK.EXE` or an existing
 overlay. A compile-only build can omit the overlay entirely, and desktop
@@ -121,7 +152,7 @@ APK.
 ## Options
 
 ```sh
-# Build Linux and Windows. PS5 and Android are skipped by default.
+# Build Linux and Windows. PS5, Android, and iOS are skipped by default.
 docker/build-releases.sh
 
 # Add the native PS5 title.
@@ -133,9 +164,21 @@ docker/build-releases.sh --android
 # Build a debug-signed APK instead of the release-signed APK.
 docker/build-releases.sh --android-debug
 
-# Explicitly skip the Android APK or PS5 title (both are the defaults).
+# Build the NetWalk game (needs an overlay).
+docker/build-releases.sh --ios --ios-sdk /path/to/Xcode.xip \
+    --overlay /path/to/overlay.nw
+
+# Build and sign the game with a development certificate.
+docker/build-releases.sh --ios --ios-sdk /path/to/Xcode.xip \
+    --overlay /path/to/overlay.nw --ios-sign apple \
+    --ios-sign-p12 /path/to/development.p12 \
+    --ios-sign-password-file /path/to/p12-password \
+    --ios-provisioning-profile /path/to/profile.mobileprovision
+
+# Explicitly skip the Android APK, PS5 title, or iOS app (all defaults).
 docker/build-releases.sh --skip-android
 docker/build-releases.sh --skip-ps5
+docker/build-releases.sh --skip-ios
 
 # Use an already-built image.
 docker/build-releases.sh --no-build-image
@@ -176,6 +219,13 @@ selected and must be set together. The wrapper also honors `NW_DOCKER_IMAGE`,
 release key is supplied through `NW_ANDROID_KEYSTORE`,
 `NW_ANDROID_KEYSTORE_PASSWORD`, `NW_ANDROID_KEY_ALIAS`, and
 `NW_ANDROID_KEY_PASSWORD`; it is required only when `--android` is selected.
+iOS builds read the default SDK from `NW_IOS_SDK`, the deployment target from
+`NW_IOS_MIN`, and the writable extraction/builtins cache from
+`NW_IOS_SDK_CACHE`. Optional signing defaults come from `NW_IOS_SIGN_MODE`,
+`NW_IOS_SIGN_P12`, `NW_IOS_SIGN_P12_PASSWORD_FILE`,
+`NW_IOS_SIGN_ENTITLEMENTS`, `NW_IOS_SIGN_PROVISIONING_PROFILE`, and
+`NW_IOS_SIGN_TEAM_ID`; the bytes of the certificate, password file,
+entitlements, and profile are mounted read-only, never copied into the image.
 
 ## Assets
 

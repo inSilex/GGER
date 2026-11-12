@@ -151,8 +151,10 @@ unsigned int __stdcall DecodeGridSpanIndexStream(unsigned short wOffsetY,
 
                     case SUBOP_FMT_CHARPTR_VIA_VALUE: {
 
-                        const char *pszSrc = NULL;
-                        memcpy(&pszSrc, puTarget, sizeof pszSrc);
+                        /* The VM holds a 32-bit guest address here; widen it
+                         * through the window mapping before use. */
+                        const char *pszSrc = (const char *)(uintptr_t)
+                            nw_guest_to_host(ReadStreamU32(puTarget));
                         CopyBoundedStringNulPadded((char *)pbText, pszSrc, dwLen);
                         break;
                     }
@@ -170,7 +172,8 @@ unsigned int __stdcall DecodeGridSpanIndexStream(unsigned short wOffsetY,
                     case SUBOP_FMT_DEREF_DWORD_DECIMAL: {
 
                         const unsigned char *puIndirect =
-                            (const unsigned char *)(uintptr_t)ReadStreamU32(puTarget);
+                            (const unsigned char *)(uintptr_t)nw_guest_to_host(
+                                ReadStreamU32(puTarget));
                         ConvertIntegerToString(ReadStreamI32(puIndirect),
                                                (char *)pbText, 10u);
                         break;
@@ -318,8 +321,8 @@ NW_SPAN_WRAPPER uint32_t __stdcall NwCellPackedBitForArg(uint32_t index)
 {
     uint32_t pending = g_pCurGridCtx->bPendingIndex;
     uint8_t *pBase = NWPP(0x624c);
-    uint8_t *pRecord = (uint8_t *)(uintptr_t)
-        *(const uint32_t *)(const void *)(pBase + ((uint32_t)index * 16u));
+    uint8_t *pRecord = (uint8_t *)(uintptr_t)nw_guest_to_host(
+        *(const uint32_t *)(const void *)(pBase + ((uint32_t)index * 16u)));
 
     return (1u << (pending & 7u)) &
            (uint32_t)pRecord[pending >> 3];
@@ -340,8 +343,8 @@ NW_SPAN_WRAPPER uint32_t __stdcall NwAcquireScaledSpanAndArm(uint32_t index)
 NW_SPAN_WRAPPER uint32_t __stdcall NwAcquireSpansAndRunStream(uint32_t index)
 {
     uint8_t *pEntry = NWPP(0x6324) + ((uint32_t)index * 8u);
-    uint8_t *pRecord = (uint8_t *)(uintptr_t)
-        *(const uint32_t *)(const void *)(pEntry + 4);
+    uint8_t *pRecord = (uint8_t *)(uintptr_t)nw_guest_to_host(
+        *(const uint32_t *)(const void *)(pEntry + 4));
 
     if (pRecord != 0) {
         for (;;) {
@@ -367,19 +370,23 @@ NW_SPAN_WRAPPER uint32_t __stdcall NwInitSpanRunScaled(const uint8_t *pInstrStre
                  (uint32_t)g_dwCellScaleY;
 
     return InitializeGridSpanCommandStreamRun(
-        (int)y, (int)x, (int)nGridTabIndex, (unsigned char *)pInstrStream);
+        (int)y, (int)x, (int)nGridTabIndex,
+        (unsigned char *)(uintptr_t)nw_guest_to_host(
+            (uint32_t)(uintptr_t)pInstrStream));
 }
 
 NW_SPAN_WRAPPER uint32_t __stdcall NwInitSpanRunFromTable(const uint8_t *pInstrStream,
                                                            uint32_t index)
 {
     uint8_t *pEntry = NWPP(0x6324) + ((uint32_t)index * 8u);
-    uint8_t *pRecord = (uint8_t *)(uintptr_t)
-        *(const uint32_t *)(const void *)(pEntry + 4);
+    uint8_t *pRecord = (uint8_t *)(uintptr_t)nw_guest_to_host(
+        *(const uint32_t *)(const void *)(pEntry + 4));
 
     return InitializeGridSpanCommandStreamRun(
         *(uint16_t *)(pRecord + 2), *(uint16_t *)(pRecord + 0),
-        *(uint16_t *)(pRecord + 4), (unsigned char *)pInstrStream);
+        *(uint16_t *)(pRecord + 4),
+        (unsigned char *)(uintptr_t)nw_guest_to_host(
+            (uint32_t)(uintptr_t)pInstrStream));
 }
 
 NW_SPAN_WRAPPER uint32_t __stdcall NwDecodeSpanRunScaled(const uint8_t *pInstrStream,
@@ -392,19 +399,22 @@ NW_SPAN_WRAPPER uint32_t __stdcall NwDecodeSpanRunScaled(const uint8_t *pInstrSt
 
     return DecodeGridSpanIndexStream((unsigned short)y, (int)x,
                                      (int)nGridTabIndex,
-                                     (unsigned char *)pInstrStream);
+                                     (unsigned char *)(uintptr_t)nw_guest_to_host(
+                                         (uint32_t)(uintptr_t)pInstrStream));
 }
 
 NW_SPAN_WRAPPER uint32_t __stdcall NwDecodeSpanRunFromTable(const uint8_t *pInstrStream,
                                                              uint32_t index)
 {
     uint8_t *pEntry = NWPP(0x6324) + ((uint32_t)index * 8u);
-    uint8_t *pRecord = (uint8_t *)(uintptr_t)
-        *(const uint32_t *)(const void *)(pEntry + 4);
+    uint8_t *pRecord = (uint8_t *)(uintptr_t)nw_guest_to_host(
+        *(const uint32_t *)(const void *)(pEntry + 4));
 
     return DecodeGridSpanIndexStream(
         *(uint16_t *)(pRecord + 2), *(uint16_t *)(pRecord + 0),
-        *(uint16_t *)(pRecord + 4), (unsigned char *)pInstrStream);
+        *(uint16_t *)(pRecord + 4),
+        (unsigned char *)(uintptr_t)nw_guest_to_host(
+            (uint32_t)(uintptr_t)pInstrStream));
 }
 #endif /* NW_UNIT_GridSpanStreamWrappers */
 
@@ -609,7 +619,13 @@ void __cdecl InitializeGridArenaFromMapHeader(void)
 
     PUB_ARENA_CURSOR_PRE = G_ARENA_CURSOR;
 
-    G_ARENA_CURSOR = AllocateHeapCursorBlock(MAP_HDR_CELL_ENTRY_CNT);
+    /* Every grid-arena base is consumed as a native pointer by the rest of the
+     * engine, so the side-table slots hold full host pointers.  The allocator
+     * returns a 32-bit guest address; widen it once here.  The one exception
+     * is PUB_SCALED_CELL_BUF (+0x630c), which save-file code treats as a
+     * guest base, so that slot keeps the guest address. */
+    G_ARENA_CURSOR = (uintptr_t)nw_guest_to_host(
+        AllocateHeapCursorBlock(MAP_HDR_CELL_ENTRY_CNT));
     PUB_CELL_ENTRY_BASE = G_ARENA_CURSOR;
 
     dwBucketIndex = 0;
@@ -619,38 +635,47 @@ void __cdecl InitializeGridArenaFromMapHeader(void)
     dwAxisScale   = GRID_BUCKET_TABLE[dwBucketIndex].dwScale;
     PUB_AXIS_SHIFT = dwAxisScale;
 
-    pbScaledCellBuf = (unsigned char *)(uintptr_t)AllocateHeapCursorBlock(
-        MAP_HDR_ROW_COUNT << ((dwAxisScale + 1u) & 0x1fu));
+    pbScaledCellBuf = (unsigned char *)(uintptr_t)nw_guest_to_host(
+        AllocateHeapCursorBlock(
+            MAP_HDR_ROW_COUNT << ((dwAxisScale + 1u) & 0x1fu)));
     G_ARENA_CURSOR  = (uintptr_t)pbScaledCellBuf;
-    PUB_SCALED_CELL_BUF = G_ARENA_CURSOR;
+    PUB_SCALED_CELL_BUF = (uintptr_t)nw_host_to_guest(pbScaledCellBuf);
 
-    G_ARENA_CURSOR    = AllocateHeapCursorBlock(dwCellCount << 4);
+    G_ARENA_CURSOR    = (uintptr_t)nw_guest_to_host(
+        AllocateHeapCursorBlock(dwCellCount << 4));
     PUB_GRID_CELL_BUF = G_ARENA_CURSOR;
 
     PUB_GRID_LAST_BYTE = (int32_t)(MAP_HDR_ROW_STRIDE - 1u);  /* last byte in a row  */
     PUB_GRID_ROW_ABOVE = -(int32_t)MAP_HDR_ROW_STRIDE;        /* the row above      */
     PUB_GRID_LAST_ROW  = (int32_t)(MAP_HDR_ROW_COUNT - 1u);   /* the last row       */
 
-    G_ARENA_CURSOR   = AllocateHeapCursorBlock(dwGridBufferBytes);
+    G_ARENA_CURSOR   = (uintptr_t)nw_guest_to_host(
+        AllocateHeapCursorBlock(dwGridBufferBytes));
     PUB_STATE_TABLE  = G_ARENA_CURSOR;
 
 
-    G_ARENA_CURSOR = AllocateHeapCursorBlock(MAP_HDR_POOL_ENTRY_CNT << 4);
+    G_ARENA_CURSOR = (uintptr_t)nw_guest_to_host(
+        AllocateHeapCursorBlock(MAP_HDR_POOL_ENTRY_CNT << 4));
     PUB_POOL_TABLE = G_ARENA_CURSOR;
 
-    G_ARENA_CURSOR  = AllocateHeapCursorBlock(MAP_HDR_REF_ENTRY_CNT << 4);
+    G_ARENA_CURSOR  = (uintptr_t)nw_guest_to_host(
+        AllocateHeapCursorBlock(MAP_HDR_REF_ENTRY_CNT << 4));
     PUB_GRID_REF_TAB = G_ARENA_CURSOR;
 
-    G_ARENA_CURSOR = AllocateHeapCursorBlock(MAP_HDR_AUX8_ENTRY_CNT << 3);
+    G_ARENA_CURSOR = (uintptr_t)nw_guest_to_host(
+        AllocateHeapCursorBlock(MAP_HDR_AUX8_ENTRY_CNT << 3));
     PUB_AUX8_TABLE = G_ARENA_CURSOR;
 
-    G_ARENA_CURSOR     = AllocateHeapCursorBlock(MAP_HDR_SLOTARG_CNT << 3);
+    G_ARENA_CURSOR     = (uintptr_t)nw_guest_to_host(
+        AllocateHeapCursorBlock(MAP_HDR_SLOTARG_CNT << 3));
     PUB_SLOT_ARG_TABLE = G_ARENA_CURSOR;
 
-    G_ARENA_CURSOR = AllocateHeapCursorBlock(MAP_HDR_AUX4_ENTRY_CNT << 2);
+    G_ARENA_CURSOR = (uintptr_t)nw_guest_to_host(
+        AllocateHeapCursorBlock(MAP_HDR_AUX4_ENTRY_CNT << 2));
     PUB_AUX4_TABLE = G_ARENA_CURSOR;
 
-    G_ARENA_CURSOR   = AllocateHeapCursorBlock(MAP_HDR_TAIL_ENTRY_CNT << 3);
+    G_ARENA_CURSOR   = (uintptr_t)nw_guest_to_host(
+        AllocateHeapCursorBlock(MAP_HDR_TAIL_ENTRY_CNT << 3));
     pbArenaTop       = (unsigned char *)G_ARENA_CURSOR;
 
     (void)FillMemoryWithZeroBytes((uint32_t)((uintptr_t)pbArenaTop -
@@ -782,7 +807,7 @@ unsigned int __stdcall ProcessGridSpanCommandStream(unsigned char bFirstCommand)
 {
     unsigned char bOp = bFirstCommand;   
 
-    g_pCurGridCtx      = (uint8_t *)(uintptr_t)g_dwSavedCurGridCtx;
+    g_pCurGridCtx      = (uint8_t *)(uintptr_t)nw_guest_to_host(g_dwSavedCurGridCtx);
     g_dwGridUserData   = g_dwSavedGridUserData;
     g_dwGridCtxAux     = g_dwSavedGridCtxAux;
 
@@ -820,7 +845,7 @@ unsigned int __stdcall ProcessGridSpanCommandStream(unsigned char bFirstCommand)
                 *g_pConvDest = (uint8_t)(int)ParseSignedDecimalIntegerFromString(g_abFieldBuf);
                 break;
             case 1:                                     
-                CopyNulTerminatedString((char *)(uintptr_t)(*(uint32_t *)(uintptr_t)g_pConvDest),
+                CopyNulTerminatedString((char *)(uintptr_t)nw_guest_to_host(*(uint32_t *)(uintptr_t)g_pConvDest),
                                         (const char *)g_abFieldBuf);
                 break;
             case 2:                                     
@@ -832,7 +857,7 @@ unsigned int __stdcall ProcessGridSpanCommandStream(unsigned char bFirstCommand)
                     (int32_t)ParseSignedDecimalIntegerFromString(g_abFieldBuf);
                 break;
             case 4:                                     
-                *(int32_t *)(uintptr_t)(*(uint32_t *)(uintptr_t)g_pConvDest) =
+                *(int32_t *)(uintptr_t)nw_guest_to_host(*(uint32_t *)(uintptr_t)g_pConvDest) =
                     (int32_t)ParseSignedDecimalIntegerFromString(g_abFieldBuf);
                 break;
             default:
@@ -1012,14 +1037,14 @@ void ProcessPendingGridCellSpanEntry(void)
         }
         pSlot = (GridSpanSlot *)(void *)((uint8_t *)(void *)pSlot - 0x10);
 
-    } while ((unsigned long)(size_t)pSlot > (unsigned long)(size_t)g_pSlotsBottom);
+    } while ((uintptr_t)(void *)pSlot > (uintptr_t)(void *)g_pSlotsBottom);
 
     ExecuteScriptInstruction(pCtx->bDispatchFlag,
                              (unsigned char)((pCtx->wCellStamp >> 8) & 0xFFu),
                              (unsigned char)(pCtx->wCellStamp & 0xFFu),
                              0u, 0xFFFFu, 0u,
                              (uint32_t)(uintptr_t)pEntry,
-                             (uint8_t *)(uintptr_t)pEntry->pCursorB);
+                             (uint8_t *)(uintptr_t)nw_guest_to_host(pEntry->pCursorB));
 
     /* One 16-bit store 0xF0FE: 0xFE into +2 re-arms the guard, 0xF0 into +3. */
     pCtx->bPendingIndex = 0xFEu;
@@ -1129,8 +1154,8 @@ dword RebuildGridHeapAndCursorStateFromStream(void)
 #ifdef NWDEBUG_ENABLED
     nwtrace_hex("rb_icur", (unsigned long)cursor);
 #endif
-    NW_WINDOW_PTR_REF(uint8_t, 0x16d4) = (uint8_t *)(uintptr_t)cursor;
-    NW_WINDOW_PTR_REF(uint8_t, 0x16d8) = (uint8_t *)(uintptr_t)cursor;
+    NW_WINDOW_PTR_REF(uint8_t, 0x16d4) = (uint8_t *)(uintptr_t)nw_guest_to_host(cursor);
+    NW_WINDOW_PTR_REF(uint8_t, 0x16d8) = (uint8_t *)(uintptr_t)nw_guest_to_host(cursor);
 
 #ifdef NWDEBUG_ENABLED
     extern void nwtrace_hex(const char *t2, unsigned long v2);
@@ -1138,10 +1163,11 @@ dword RebuildGridHeapAndCursorStateFromStream(void)
 #endif
     if (MEM((nw_data_window + 0x6260)) != 0) {
 
-        ResetStreamCursorState((unsigned char *)cursor);
+        ResetStreamCursorState((unsigned char *)(uintptr_t)
+                               nw_guest_to_host(cursor));
         slot_cursor = AllocateHeapCursorBlock(MEM((nw_data_window + 0x6260)));
-        NW_WINDOW_PTR_REF(uint8_t, 0x16d4) = (uint8_t *)(uintptr_t)slot_cursor;
-        NW_WINDOW_PTR_REF(uint8_t, 0x16d8) = (uint8_t *)(uintptr_t)slot_cursor;
+        NW_WINDOW_PTR_REF(uint8_t, 0x16d4) = (uint8_t *)(uintptr_t)nw_guest_to_host(slot_cursor);
+        NW_WINDOW_PTR_REF(uint8_t, 0x16d8) = (uint8_t *)(uintptr_t)nw_guest_to_host(slot_cursor);
         NW_NATIVE_BOOT("rb_slot_ok");
     }
 

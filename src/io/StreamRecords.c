@@ -207,8 +207,8 @@ extern unsigned char nw_data_window[];
 
 #define G_RECORD_TAG_BYTE       (*(const BYTE *)(nw_data_window + 0x16d0))
 
-#define T_LENGTH_BIAS_SUB      ((const DWORD *)(unsigned long)(nw_data_window + 0x1f8))
-#define T_LENGTH_BIAS_ADD      ((const DWORD *)(unsigned long)(nw_data_window + 0x20c))
+#define T_LENGTH_BIAS_SUB      ((const DWORD *)(uintptr_t)(nw_data_window + 0x1f8))
+#define T_LENGTH_BIAS_ADD      ((const DWORD *)(uintptr_t)(nw_data_window + 0x20c))
 
 extern int __cdecl FetchNextStreamByteIntoSlotDescriptor(void);
 
@@ -384,7 +384,7 @@ void DecompressLzssBlockToBuffer(int cbSrc, BYTE *pbDst, BYTE *pbSrc)
 
 extern DWORD __cdecl GetTrackedSlotFilePosition(void);
 
-extern unsigned long g_nBufferedBytesRemaining;  
+extern uint32_t g_nBufferedBytesRemaining;  /* dword at nw_data_window+0x16b4 */
 
 int __cdecl GetStreamLogicalBytePosition(void)
 {

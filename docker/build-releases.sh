@@ -22,6 +22,19 @@ ps5_requested=0
 skip_ps5_explicit=0
 skip_android=1
 android_debug=0
+skip_ios=1
+ios_requested=0
+skip_ios_explicit=0
+ios_game=0
+ios_sdk=${NW_IOS_SDK:-}
+ios_min=${NW_IOS_MIN:-13.0}
+ios_cache=${NW_IOS_SDK_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/netwalk/ios-sdk}
+ios_sign_mode=${NW_IOS_SIGN_MODE:-none}
+ios_sign_p12=${NW_IOS_SIGN_P12:-}
+ios_sign_p12_password_file=${NW_IOS_SIGN_P12_PASSWORD_FILE:-}
+ios_sign_entitlements=${NW_IOS_SIGN_ENTITLEMENTS:-}
+ios_sign_profile=${NW_IOS_SIGN_PROVISIONING_PROFILE:-}
+ios_sign_team_id=${NW_IOS_SIGN_TEAM_ID:-}
 ps5_sdk=${PS5_SDK:-}
 ps5_llvm=${PS5_LLVM:-}
 extract_assets=
@@ -64,6 +77,21 @@ Options:
   --android            Build the signed Android release APK
   --android-debug      Build a debug-signed Android APK
   --skip-android       Skip the Android APK (default)
+  --ios                Build the NetWalk iOS game app and IPA
+  --ios-sdk PATH       Host path to an iPhoneOS.sdk, Xcode.app, or .xip
+                       (default: NW_IOS_SDK)
+  --ios-min VERSION    Minimum iOS deployment target (default: 13.0)
+  --ios-sign MODE      Sign the .app/.ipa: none, adhoc, or apple (default: none)
+  --ios-sign-p12 PATH  PKCS#12 certificate for --ios-sign apple
+  --ios-sign-password-file PATH
+                       Read the PKCS#12 password from this file
+  --ios-entitlements PATH
+                       Entitlements plist embedded in the signature
+                       (default: derive from --ios-provisioning-profile)
+  --ios-provisioning-profile PATH
+                       Copy this profile to embedded.mobileprovision and use
+                       its Entitlements when --ios-entitlements is absent
+  --skip-ios           Skip the iOS target (default)
   --ps5-sdk DIR        Mount an external ps5-payload-dev SDK root
                        (implies --ps5)
   --ps5-llvm DIR       Mount an external LLVM 20 root (bin/ and root/usr;
@@ -91,12 +119,38 @@ Environment:
   NW_ANDROID_KEY_ALIAS Key alias
   NW_ANDROID_KEY_PASSWORD
                        Key password
+  NW_IOS_SDK           Default iPhoneOS.sdk/Xcode.app/.xip input
+  NW_IOS_MIN           Default minimum iOS deployment target
+  NW_IOS_SDK_CACHE     Host cache for extracted SDKs and builtins
+                       (default: ~/.cache/netwalk/ios-sdk)
+  NW_IOS_SIGN_MODE     Default iOS signing mode (none, adhoc, apple)
+  NW_IOS_SIGN_P12      Default PKCS#12 certificate path
+  NW_IOS_SIGN_P12_PASSWORD_FILE
+                       Default PKCS#12 password file
+  NW_IOS_SIGN_ENTITLEMENTS
+                       Default entitlements plist
+  NW_IOS_SIGN_PROVISIONING_PROFILE
+                       Default provisioning profile
+  NW_IOS_SIGN_TEAM_ID  Default team identifier embedded in the signature
 
 The Android release APK is signed with the four NW_ANDROID_* variables above.
 The keystore is mounted read-only into the container; passwords are passed only
 through the process environment.  Android is skipped by default: pass --android
 for a signed release APK, or --android-debug for a debug-signed APK when no
 release key is available.  Android builds need an overlay, so they cannot be
+combined with --no-overlay.
+
+iOS is skipped by default.  Pass --ios together with --ios-sdk or NW_IOS_SDK
+to build the NetWalk game app.  The SDK input may be an
+already-extracted iPhoneOS.sdk directory, an Xcode.app tree, or a downloaded
+.xip file; the host mounts it read-only and keeps extracted SDKs and
+compiler-rt builtins in NW_IOS_SDK_CACHE.  The container stages only
+ios/NetWalk.ipa; the intermediate .app stays in the build tree.  Without
+--ios-sign the app is unsigned and will not install on a stock device.
+--ios-sign adhoc adds an ad-hoc signature;
+--ios-sign apple (with --ios-sign-p12 and, for device installs,
+--ios-provisioning-profile) signs with an Apple certificate through the
+rcodesign already in the image.  The game needs an overlay, so --ios cannot be
 combined with --no-overlay.
 
 Linux and Windows are built by default.  Pass --ps5 for the native PS5 title;
@@ -234,6 +288,57 @@ while (($#)); do
             android_debug=0
             shift
             ;;
+        --ios)
+            skip_ios=0
+            ios_requested=1
+            ios_game=1
+            shift
+            ;;
+        --ios-sdk)
+            ios_sdk=${2:?--ios-sdk needs a path}
+            shift 2
+            ;;
+        --ios-min)
+            ios_min=${2:?--ios-min needs a version}
+            shift 2
+            ;;
+        --ios-sign)
+            ios_sign_mode=${2:?--ios-sign needs a mode}
+            skip_ios=0
+            ios_requested=1
+            shift 2
+            ;;
+        --ios-sign-p12)
+            ios_sign_p12=${2:?--ios-sign-p12 needs a path}
+            skip_ios=0
+            ios_requested=1
+            shift 2
+            ;;
+        --ios-sign-password-file)
+            ios_sign_p12_password_file=${2:?--ios-sign-password-file needs a path}
+            skip_ios=0
+            ios_requested=1
+            shift 2
+            ;;
+        --ios-entitlements)
+            ios_sign_entitlements=${2:?--ios-entitlements needs a path}
+            skip_ios=0
+            ios_requested=1
+            shift 2
+            ;;
+        --ios-provisioning-profile)
+            ios_sign_profile=${2:?--ios-provisioning-profile needs a path}
+            skip_ios=0
+            ios_requested=1
+            shift 2
+            ;;
+        --skip-ios)
+            skip_ios_explicit=1
+            skip_ios=1
+            ios_requested=0
+            ios_game=0
+            shift
+            ;;
         --ps5-sdk)
             ps5_sdk=${2:?--ps5-sdk needs a directory}
             ps5_requested=1
@@ -320,6 +425,47 @@ if ((skip_android == 0 && android_debug == 0)); then
     done
     [[ -f "$NW_ANDROID_KEYSTORE" ]] ||
         die "Android keystore not found: $NW_ANDROID_KEYSTORE"
+fi
+
+if ((skip_ios_explicit)); then
+    ((ios_requested == 0)) ||
+        die "--skip-ios cannot be combined with an iOS build option"
+fi
+if ((skip_ios == 0)); then
+    [[ -n "$ios_sdk" ]] ||
+        die "iOS build requested but --ios-sdk (or NW_IOS_SDK) is not set"
+    ((ios_game)) ||
+        die "iOS build requested but no target selected;"$'\n' \
+            "    pass --ios"
+    [[ -e "$ios_sdk" ]] || die "iOS SDK input not found: $ios_sdk"
+    ((ios_game == 0 || no_overlay == 0)) ||
+        die "--ios needs an overlay; pass --overlay, --extract-assets, or"$'\n' \
+            "    restore assets/overlay.nw (--no-overlay makes an unplayable app)"
+    ios_sdk=$(cd -- "$(dirname -- "$ios_sdk")" && pwd)/$(basename -- "$ios_sdk")
+    mkdir -p "$ios_cache"
+    ios_cache=$(cd -- "$ios_cache" && pwd)
+    if [[ "$ios_sign_mode" == "none" && -n "$ios_sign_p12" ]]; then
+        ios_sign_mode=apple
+    fi
+    case "$ios_sign_mode" in
+        none|adhoc) ;;
+        apple)
+            [[ -n "$ios_sign_p12" ]] ||
+                die "--ios-sign apple needs --ios-sign-p12"
+            ;;
+        *)
+            die "--ios-sign must be none, adhoc, or apple (got '$ios_sign_mode')"
+            ;;
+    esac
+    for _sign_var in ios_sign_p12 ios_sign_p12_password_file \
+                     ios_sign_entitlements ios_sign_profile; do
+        _sign_path=${!_sign_var}
+        [[ -n "$_sign_path" ]] || continue
+        [[ -f "$_sign_path" ]] ||
+            die "iOS signing input not found: $_sign_path"
+        printf -v "$_sign_var" '%s' \
+            "$(cd -- "$(dirname -- "$_sign_path")" && pwd)/$(basename -- "$_sign_path")"
+    done
 fi
 
 command -v "$docker_cmd" >/dev/null 2>&1 ||
@@ -428,6 +574,54 @@ else
     printf '==> Android release APK enabled (keystore %s)\n' "$keystore"
 fi
 
+ios_args=()
+ios_mounts=()
+ios_env=()
+if ((skip_ios)); then
+    printf '==> iOS app disabled\n'
+    ios_args+=(--skip-ios)
+else
+    case "$ios_sdk" in
+        *.xip|*.XIP) ios_container_sdk=/input/ios-sdk.xip ;;
+        *) ios_container_sdk=/input/ios-sdk ;;
+    esac
+    ios_mounts+=(
+        -v "$ios_sdk:$ios_container_sdk:ro"
+        -v "$ios_cache:/cache/ios-sdk"
+    )
+    ios_env+=(
+        -e NW_IOS_SDK="$ios_container_sdk"
+        -e NW_IOS_SDK_CACHE=/cache/ios-sdk
+        -e NW_IOS_MIN="$ios_min"
+        -e NW_IOS_SIGN_MODE="$ios_sign_mode"
+    )
+    if [[ -n "$ios_sign_p12" ]]; then
+        ios_mounts+=(-v "$ios_sign_p12:/input/ios-sign/cert.p12:ro")
+        ios_env+=(-e NW_IOS_SIGN_P12=/input/ios-sign/cert.p12)
+    fi
+    if [[ -n "$ios_sign_p12_password_file" ]]; then
+        ios_mounts+=(-v "$ios_sign_p12_password_file:/input/ios-sign/p12-password:ro")
+        ios_env+=(-e NW_IOS_SIGN_P12_PASSWORD_FILE=/input/ios-sign/p12-password)
+    fi
+    if [[ -n "$ios_sign_entitlements" ]]; then
+        ios_mounts+=(-v "$ios_sign_entitlements:/input/ios-sign/entitlements.plist:ro")
+        ios_env+=(-e NW_IOS_SIGN_ENTITLEMENTS=/input/ios-sign/entitlements.plist)
+    fi
+    if [[ -n "$ios_sign_profile" ]]; then
+        ios_mounts+=(-v "$ios_sign_profile:/input/ios-sign/profile.mobileprovision:ro")
+        ios_env+=(-e NW_IOS_SIGN_PROVISIONING_PROFILE=/input/ios-sign/profile.mobileprovision)
+    fi
+    if [[ -n "$ios_sign_team_id" ]]; then
+        ios_env+=(-e NW_IOS_SIGN_TEAM_ID="$ios_sign_team_id")
+    fi
+    if ((ios_game)); then
+        ios_args+=(--ios)
+    fi
+    ios_args+=(--ios-sdk "$ios_container_sdk" --ios-min "$ios_min")
+    printf '==> iOS game enabled (SDK %s, cache %s, signing %s)\n' \
+        "$ios_sdk" "$ios_cache" "$ios_sign_mode"
+fi
+
 printf '==> running release container\n'
 "$docker_cmd" run --rm \
     --platform "$platform" \
@@ -440,11 +634,14 @@ printf '==> running release container\n'
     "${ps5_mounts[@]}" \
     "${android_mounts[@]}" \
     "${android_env[@]}" \
+    "${ios_mounts[@]}" \
+    "${ios_env[@]}" \
     "$image" \
     --source /src \
     --out /out \
     "${asset_args[@]}" \
     "${ps5_args[@]}" \
-    "${android_args[@]}"
+    "${android_args[@]}" \
+    "${ios_args[@]}"
 
 printf '\nRelease directory: %s\n' "$out_dir"

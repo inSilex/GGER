@@ -32,6 +32,20 @@ Uninstalling also removes the live save; back it up first if the scores matter.
 Android writes no routine save log. Asset staging messages and native errors go
 to logcat under the `NetWalk` tag.
 
+## iOS
+
+The `.app` bundle is read-only. `platforms/ios/ios_main.c` copies `overlay.nw`
+and `gm.sf2` from the bundle into `SDL_GetPrefPath("Gamos", "NetWalk")` (the
+app's Documents directory) when the copy is missing, changes size, or is older
+than the bundled file. The game then changes into that directory and runs with
+a synthetic `NETWALK.EXE` module path, so the overlay, SoundFont, temporary
+files, and `NETWALK0.282` all live in writable app storage.
+
+To reset an iOS installation, delete the app (or use the Files app to remove
+its Documents data) and launch again. Deleting the app removes the live save;
+back it up first if the scores matter. Startup asset messages and native errors
+go to stderr, which appears in the device console.
+
 ## PS5
 
 The native title probes writable directories in this order:

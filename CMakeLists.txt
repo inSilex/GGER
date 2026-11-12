@@ -46,6 +46,11 @@ if(ANDROID)
     return()
 endif()
 
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    include("${NW_ROOT}/cmake/ios.cmake")
+    return()
+endif()
+
 if(NOT WIN32)
     include("${NW_ROOT}/cmake/linux-x86_64.cmake")
     return()
@@ -343,6 +348,68 @@ if(EXISTS "${NW_SOUNDFONT_ASSET}")
         COMMENT "Copying NetWalk SoundFont")
 else()
     message(STATUS "NetWalk SoundFont not found: ${NW_SOUNDFONT_ASSET} (skipping copy)")
+endif()
+
+# ---------------------------------------------------------------------------
+# High-image proxy (64-bit guest-window validation build).
+#
+# Same objects, linked at a 4 GiB-aligned image base above 4 GiB.  Every
+# static guest object (data window, pointer side table, heap-free statics)
+# then lives in the guest window, exercising the address model iOS needs
+# without disturbing the shipping low image.  The guest offset is the low 32
+# bits of the host address, and nw_guest_base becomes 0x100000000.
+# ---------------------------------------------------------------------------
+option(NW_WINDOWS_HIGH_PROXY
+       "Also build netwalk-hi.exe at a 4 GiB-aligned high image base" ON)
+if(NW_WINDOWS_HIGH_PROXY)
+    add_executable(netwalk-hi $<TARGET_OBJECTS:nw_objects>)
+    set_target_properties(netwalk-hi PROPERTIES
+        WIN32_EXECUTABLE TRUE
+        OUTPUT_NAME netwalk-hi
+        SUFFIX ".exe"
+    )
+    target_sources(netwalk-hi PRIVATE "${NW_ICON_RC}")
+    if(MSVC)
+        target_link_options(netwalk-hi PRIVATE
+            /SUBSYSTEM:WINDOWS
+            /DYNAMICBASE:NO
+            /BASE:0x140000000
+            /STACK:1048576
+        )
+        set_property(TARGET netwalk-hi PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_link_libraries(netwalk-hi PRIVATE
+            "${NW_SDL_LIBRARY}"
+            winmm ole32 oleaut32 uuid shell32 advapi32 setupapi imm32
+            version dinput8 dxguid hid ws2_32 bcrypt cfgmgr32 powrprof
+        )
+    else()
+        target_link_options(netwalk-hi PRIVATE
+            -nostartfiles
+            "-Wl,--image-base,0x140000000"
+            "-Wl,--disable-dynamicbase"
+            "-Wl,--no-insert-timestamp"
+            "-Wl,--stack,1048576"
+        )
+        target_link_options(netwalk-hi PRIVATE "-Wl,-e,NwWin64Entry")
+        target_link_libraries(netwalk-hi PRIVATE
+            "${NW_SDL_LIBRARY}"
+            mingw32 gcc mingwex msvcrt
+            kernel32 user32 gdi32 winmm ole32 oleaut32 uuid shell32 advapi32
+            setupapi imm32 version dinput8 dxguid hid ws2_32 bcrypt cfgmgr32
+            powrprof m
+        )
+    endif()
+    add_custom_command(TARGET netwalk-hi POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${NW_OVERLAY_ASSET}"
+                "$<TARGET_FILE_DIR:netwalk-hi>/overlay.nw"
+        COMMENT "Copying NetWalk overlay (high image)")
+    add_custom_command(TARGET netwalk-hi POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+                "${NW_SOUNDFONT_ASSET}"
+                "$<TARGET_FILE_DIR:netwalk-hi>/gm.sf2"
+        COMMENT "Copying NetWalk SoundFont (high image)")
 endif()
 
 message(STATUS "GGER target: ${CMAKE_SYSTEM_NAME}/${CMAKE_SYSTEM_PROCESSOR}")

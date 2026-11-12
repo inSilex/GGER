@@ -405,12 +405,12 @@ uint8_t __stdcall UtNotifyStartMidiSequence(uint32_t dwTrackBlock)
     uint32_t dwCursor = dwTrackBlock + 4u;
 
     ResetMidiOutAndTimerEvent();
-    G_DW_MIDI_CURSOR = dwCursor;
+    G_DW_MIDI_CURSOR = (void *)(uintptr_t)nw_guest_to_host(dwCursor);
 
-    if (*(const uint8_t *)(uintptr_t)dwCursor == 0xF8u) {
-        G_DW_MIDI_CURSOR = dwCursor + 1u;
+    if (*(const uint8_t *)(uintptr_t)nw_guest_to_host(dwCursor) == 0xF8u) {
+        G_DW_MIDI_CURSOR = (void *)(uintptr_t)nw_guest_to_host(dwCursor + 1u);
         (void)DecodeMidiTrackVariableLengthQuantity();  /* advances G_DW_MIDI_CURSOR itself */
-        G_DW_MIDI_CURSOR += 1u;
+        G_DW_MIDI_CURSOR = (void *)((uintptr_t)G_DW_MIDI_CURSOR + 1u);
     }
 
     G_DW_MIDI_LOOP_START  = G_DW_MIDI_CURSOR;

@@ -160,7 +160,7 @@ int __stdcall LoadAndVerifySaveFileHeaderChunk(const char *lpszSaveFileName)
 
     dwHdrCursor    = ReadU32(pbyHeader);
 
-    g_pSavedStateCursor = (u8 *)(uintptr_t)(dwHdrCursor + SAVE_HDR_BYTES);
+    g_pSavedStateCursor = (u8 *)(uintptr_t)nw_guest_to_host(dwHdrCursor + SAVE_HDR_BYTES);
 
     /* Rewind past the header plus the payload just described. */
     if (SeekStreamLogicalOffset(SAVE_STREAM_LOGICAL_ORIGIN,

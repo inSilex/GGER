@@ -94,7 +94,7 @@ void AddRectToExtentList(int nMaxY, int nMaxX, int nMinY, int nMinX)
             pFound = pScan;
             break;
         }
-        pNext = (RectNode *)(uintptr_t)pScan->pNext;
+        pNext = (RectNode *)(uintptr_t)nw_guest_to_host(pScan->pNext);
         if (pNext == NULL) {
             pFound = (RectNode *)(uintptr_t)AllocHeapBlock(RECT_NODE_BYTES);
             pScan->pNext = (uint32_t)(uintptr_t)pFound;
@@ -122,10 +122,10 @@ void AddRectToExtentList(int nMaxY, int nMaxX, int nMinY, int nMinX)
      */
 CoalesceRestart:
     for (pCur = g_pRectListHead, pPrev = NULL; pCur != NULL;
-         pPrev = pCur, pCur = (RectNode *)(uintptr_t)pCur->pNext) {
+         pPrev = pCur, pCur = (RectNode *)(uintptr_t)nw_guest_to_host(pCur->pNext)) {
 
-        for (pNext = (RectNode *)(uintptr_t)pCur->pNext; pNext != NULL;
-             pNext = (RectNode *)(uintptr_t)pNext->pNext) {
+        for (pNext = (RectNode *)(uintptr_t)nw_guest_to_host(pCur->pNext); pNext != NULL;
+             pNext = (RectNode *)(uintptr_t)nw_guest_to_host(pNext->pNext)) {
             if ((pNext->nMinX <= pCur->nMaxX) && (pNext->nMinY <= pCur->nMaxY) &&
                 (pCur->nMinX <= pNext->nMaxX) && (pCur->nMinY <= pNext->nMaxY)) {
                 if (pCur->nMinX < pNext->nMinX) { pNext->nMinX = pCur->nMinX; }
@@ -136,7 +136,7 @@ CoalesceRestart:
                 if (pPrev != NULL) {
                     pPrev->pNext = pCur->pNext;   /* unlink the absorbed node */
                 } else {
-                    g_pRectListHead = (RectNode *)(uintptr_t)pCur->pNext;
+                    g_pRectListHead = (RectNode *)(uintptr_t)nw_guest_to_host(pCur->pNext);
                 }
                 FreeHeapBlock((uint8_t *)pCur);
                 goto CoalesceRestart;
@@ -412,9 +412,10 @@ void __stdcall CopyRowsBulkWithTailToDisplayBuffer(
             if (x1 <= x0)
                 return;
 
-            pSrc = (unsigned char *)(intptr_t)(nSrcBase
-                     - (nSrcFirstRow * nSrcStride)
-                     - nSrcFirstCol);
+            pSrc = (unsigned char *)(uintptr_t)nw_guest_to_host(
+                       (uint32_t)(nSrcBase
+                                  - (nSrcFirstRow * nSrcStride)
+                                  - nSrcFirstCol));
 
             /* The screen background is a 640x480 indexed surface and is
              * blitted here before sprites are overlaid.  If the overlay pack
@@ -442,7 +443,8 @@ void __stdcall CopyRowsBulkWithTailToDisplayBuffer(
                 sx0 = srcX0 + x0 - nDstFirstCol;
                 sx1 = srcX0 + x1 - nDstFirstCol;
                 if (pBg != NULL &&
-                    (const unsigned char *)(intptr_t)nSrcBase == pBg &&
+                    (const unsigned char *)(uintptr_t)nw_guest_to_host(
+                        (uint32_t)nSrcBase) == pBg &&
                     srcW == NW_BG_SRC_W && srcH == NW_BG_SRC_H &&
                     nSrcStride == srcW &&
                     srcY0 >= 0 && srcY0 + nRows <= srcH &&
@@ -591,9 +593,10 @@ void __stdcall CopyRowsBulkWithTailToDisplayBuffer(
              + ((g_ScreenRows - 1 - nDstFirstRow) * g_ScreenPitch)
              + nDstFirstCol);
 
-    pSrc = (unsigned char *)(intptr_t)(nSrcBase
-             - (nSrcFirstRow * nSrcStride)
-             - nSrcFirstCol);
+    pSrc = (unsigned char *)(uintptr_t)nw_guest_to_host(
+               (uint32_t)(nSrcBase
+                          - (nSrcFirstRow * nSrcStride)
+                          - nSrcFirstCol));
 
     uDwords = (unsigned int)nCols >> 2;
     nTail  = (int)((unsigned int)nCols & 3u);
@@ -937,7 +940,7 @@ static NwRowCopyFn const nw_rowCopyByFlagsBits[4] = {
 };
 
 #ifdef NWDEBUG_ENABLED
-extern unsigned long g_pSlotsTop;
+extern uintptr_t g_pSlotsTop;
 extern void nwtrace_hex(const char *, unsigned long);
 #endif
 
@@ -990,8 +993,8 @@ static int NwCopySpriteRowsToDisplayBufferImpl(void)
 
 retry_object:                                  /* re-entry from the tail chain loop */
     /* The extent/display list is guest memory; pNext is one 32-bit word. */
-    next_node = (void *)(uintptr_t)
-                (*(const uint32_t *)((const char *)obj + 0x10));
+    next_node = (void *)(uintptr_t)nw_guest_to_host(
+                *(const uint32_t *)((const char *)obj + 0x10));
 
     /* ---- view rect from object fields, relative to coord bases ---------- */
     int32_t v_left  = *(const int32_t *)(char *)obj           - g_coord_base_x; /* obj+0x0 */
@@ -1027,15 +1030,16 @@ retry_object:                                  /* re-entry from the tail chain l
 
             /* Both records are guest-width: +0xc is the image-descriptor
              * pointer and the descriptor's first word points at the image. */
-            void *imgdesc = (void *)(uintptr_t)
-                            (*(const uint32_t *)((const char *)rec + 0xC));
+            void *imgdesc = (void *)(uintptr_t)nw_guest_to_host(
+                            *(const uint32_t *)((const char *)rec + 0xC));
 
-            const void *imgrec = (const void *)(uintptr_t)
-                                 (*(const uint32_t *)imgdesc);
+            uint32_t imgrec_guest = *(const uint32_t *)imgdesc;
+            const void *imgrec;
 
-            if ((uintptr_t)imgrec < 0x10000u || (uintptr_t)imgrec >= 0x80000000u) {
+            if (imgrec_guest < 0x10000u || imgrec_guest >= 0x80000000u) {
                 continue;
             }
+            imgrec = (const void *)(uintptr_t)nw_guest_to_host(imgrec_guest);
             int32_t src_w = (int16_t)*(const uint16_t *)(const char *)imgrec;         /* image+0x0 */
             int32_t src_h = (int16_t)*((const uint16_t *)(const char *)imgrec + 1);   /* image+0x2 */
 

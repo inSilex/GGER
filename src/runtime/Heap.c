@@ -310,7 +310,7 @@ unsigned char *__stdcall FillMemoryWithZeroBytes(unsigned int dwCount,
 
 #include <stdint.h>
 
-extern int32_t g_dwHeapRegionEndSentinel;
+extern uintptr_t g_dwHeapRegionEndSentinel;
 
 extern uint8_t *g_pSlotsTop;
 
@@ -323,7 +323,7 @@ void FreeArenaSlot(uint8_t *pSlotToFree)
 
     *pSlotToFree = 0u;   /* mark slot free (clear in-use bit) */
 
-    if ((int32_t)(uintptr_t)(pSlotToFree - 0x10) == g_dwHeapRegionEndSentinel) {
+    if ((uintptr_t)(pSlotToFree - 0x10) == g_dwHeapRegionEndSentinel) {
         do {
             pbCandidate = pSlotToFree;
             if (pbCandidate == (uint8_t *)(uintptr_t)g_pSlotsTop) break;
@@ -460,7 +460,7 @@ extern unsigned char nw_data_window[];
 
 extern uint8_t g_abHeapScratchBuf[152];
 
-extern int32_t g_dwHeapRegionEndSentinel;
+extern uintptr_t g_dwHeapRegionEndSentinel;
 
 extern uint8_t *g_pHeapSlotBase;
 
@@ -480,7 +480,7 @@ void * __stdcall GetHeapArenaBlockEnd(uint32_t dwRequestSize)
     }
 
     if (g_dwHeapRegionEndSentinel != 0) {
-        guest_end = (uint32_t)g_dwHeapRegionEndSentinel - dwRequestSize;
+        guest_end = (uint32_t)(uintptr_t)g_dwHeapRegionEndSentinel - dwRequestSize;
     } else if (g_pHeapSlotBase != NULL) {
         /*
          * The original performs this addition in 32 bits and wraps.  The
@@ -495,7 +495,7 @@ void * __stdcall GetHeapArenaBlockEnd(uint32_t dwRequestSize)
         return NULL;        /* arena uninitialized: no valid end address */
     }
 
-    return (void *)(uintptr_t)guest_end;
+    return (void *)(uintptr_t)nw_guest_to_host(guest_end);
 }
 #endif /* NW_UNIT_GetHeapArenaBlockEnd */
 
@@ -605,7 +605,7 @@ void InstallInitialHeapRegionBounds(void)
 
     /* The recovered slot at +0x6240 is the slot-chain top pointer.  Keeping it
      * in the native pointer table matches the 64-bit window model. */
-    NW_WINDOW_PTR_REF(uint8_t, 0x6240) = (uint8_t *)(uintptr_t)end;
+    NW_WINDOW_PTR_REF(uint8_t, 0x6240) = (uint8_t *)(uintptr_t)nw_guest_to_host((uint32_t)end);
     SetHeapRegionBounds(end);
 }
 #endif /* NW_UNIT_InstallInitialHeapRegionBounds */
@@ -713,8 +713,8 @@ uint32_t PublishHeapStateTripleFromTwoSources(void)
 {
     g_dwHeapCapacityWords = g_dwFramebufferArenaBytes >> 2u;
 
-    g_pHeapFirstNode = (uint32_t *)(uintptr_t)g_dwHeapCursorSource;
-    g_pCursorBlock   = (uint32_t *)(uintptr_t)g_dwHeapCursorSource;
+    g_pHeapFirstNode = (uint32_t *)(uintptr_t)nw_guest_to_host(g_dwHeapCursorSource);
+    g_pCursorBlock   = (uint32_t *)(uintptr_t)nw_guest_to_host(g_dwHeapCursorSource);
     return g_dwHeapCursorSource;
 }
 #endif /* NW_UNIT_PublishHeapStateTripleFromTwoSources */
@@ -733,7 +733,7 @@ uint32_t PublishHeapStateTripleFromTwoSources(void)
 
 #include <stdint.h>
 
-extern int32_t g_dwHeapRegionEndSentinel;
+extern uintptr_t g_dwHeapRegionEndSentinel;
 
 extern uint8_t *g_pHeapSlotBase;
 
@@ -745,7 +745,7 @@ void __stdcall SetHeapRegionBounds(int32_t pHeapRegionEnd)
     int32_t dwSizeInWords;
 
     /* Publish the new region-end sentinel (walk loops compare against this). */
-    g_dwHeapRegionEndSentinel = pHeapRegionEnd;
+    g_dwHeapRegionEndSentinel = (uintptr_t)nw_guest_to_host((uint32_t)pHeapRegionEnd);
 
     dwSizeInWords = (int32_t)((uint32_t)pHeapRegionEnd -
                               (uint32_t)(uintptr_t)g_pHeapSlotBase) / 4 - 4;

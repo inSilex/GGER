@@ -751,9 +751,10 @@ int __stdcall SelectAndDispatchGridRenderMappingByCommand(BYTE bMapperSelect, BY
 
     InitializeAxisSpanFromSavedPoint((char)bCommand);
 
-    pBitmap = (const BYTE *)(uintptr_t)
-              *(const uint32_t *)((uintptr_t)g_dwGridCtxRecordBase
-                                  + ((uintptr_t)(unsigned int)bRecordIndex << 4));
+    pBitmap = (const BYTE *)(uintptr_t)nw_guest_to_host(
+              *(const uint32_t *)((uintptr_t)nw_guest_to_host(
+                                      (uint32_t)g_dwGridCtxRecordBase +
+                                      ((uint32_t)bRecordIndex << 4))));
 
     if ((bCommand == CMD_SELECT_PAIR_A) || (bCommand == CMD_SELECT_PAIR_B)) {
 

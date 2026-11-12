@@ -46,7 +46,7 @@
 
 extern uint8_t *g_pSlotsTop;
 
-extern int32_t g_dwHeapRegionEndSentinel;
+extern uintptr_t g_dwHeapRegionEndSentinel;
 
 /* Resolved callee: row 54. Publishes a new region-end sentinel and recomputes size-in-words. */
 extern void __stdcall SetHeapRegionBounds(int32_t pHeapRegionEnd) __asm__("_SetHeapRegionBounds");
@@ -158,7 +158,9 @@ static void copy_slot_16(void **dst, const void *slot)
 
 void __stdcall CopyRecordsToSlotChain(int index)
 {
-    u8 *rec = (u8 *)g_RecordArrayBase + (size_t)index * RECORD_STRIDE; 
+    u8 *rec = (u8 *)(uintptr_t)nw_guest_to_host(
+        (uint32_t)(uintptr_t)g_RecordArrayBase +
+        (size_t)index * RECORD_STRIDE);
 
     /* ---- Phase 1: count eligible slots, top -> bottom ------------------- */
     u32 slot_count = 0;                              /* rec[+12]; cleared then incremented */
@@ -182,7 +184,8 @@ void __stdcall CopyRecordsToSlotChain(int index)
                   * twice that rate and drives the destination anchor below.   */
     while (i < g_RecordCountLimit) {            /* CMP,JL (signed compare in bytes) */
         MoveMemoryRegion(
-            (void *)((uintptr_t)(*(u32 *)(rec + 8)) + i * 2u * g_RecordStrideBytes),
+            (void *)(uintptr_t)nw_guest_to_host(
+                *(u32 *)(rec + 8) + i * 2u * g_RecordStrideBytes),
                                                                         /* dest: last pushed */
             (const void *)((const u8 *)g_BulkCopyBasePtr + ((i << g_BulkCopyShiftAmount) * 2u)),
                                                                         /* src : middle push */
@@ -191,7 +194,8 @@ void __stdcall CopyRecordsToSlotChain(int index)
     }
 
     /* ---- Phase 3: per-slot copy + header rewire, top -> bottom --------- */
-    void *dst = (void *)((uintptr_t)(*(u32 *)(rec + 8)) + g_SlotRegionBase * 2u); /* [+0x14] */
+    void *dst = (void *)(uintptr_t)nw_guest_to_host(
+        *(u32 *)(rec + 8) + g_SlotRegionBase * 2u);              /* [+0x14] */
     u32 out_idx = 0;                             /* [+0x28]                       */
     u16 last_assigned = 0;                       /* [+0x18]; sticky, only the nibble-3 case rewrites it */
 
@@ -514,7 +518,7 @@ ResetSlotTablesFormatApplyAndDispatchSettings(uint32_t param_1)
     ResetSlotAndHookTablesToDefaults();
 
     (void)ScanStringFormatToVarArgs(
-        (char *)(uintptr_t)param_1,
+        (char *)(uintptr_t)nw_guest_to_host(param_1),
         (char *)(intptr_t)(nw_data_window + 0x504), /* "%s %d %d %d %d" */
         stem, &value3, &value2, &value1, &value0);
 

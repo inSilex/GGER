@@ -1,10 +1,10 @@
 # Building GGER
 
 GGER builds the NetWalk game through one top-level CMake entry point. Linux,
-Windows, PS5, and Android packaging use the checked-in CMake presets. The
+Windows, PS5, Android, and iOS packaging use the checked-in CMake presets. The
 Android presets invoke the Gradle wrapper, which in turn invokes CMake with the
 NDK toolchain. Release is the default build type, and debug builds are separate
-presets or Gradle variants. All four targets use the same recovered source tree
+presets or Gradle variants. All targets use the same recovered source tree
 and the same asset overlay.
 
 ## Prerequisites
@@ -19,6 +19,8 @@ and the same asset overlay.
   - PS5: the `ps5-payload-dev` SDK and its Prospero LLVM toolchain
   - Android: Android SDK platform 35, build-tools 35.0.0, NDK
     `27.2.12479018`, the SDK CMake `3.22.1` package, and JDK 17 or newer
+  - iOS: Docker and a user-supplied Apple iPhoneOS SDK (directory, `Xcode.app`
+    tree, or `.xip`). No Xcode or macOS toolchain is installed on the host.
 - Optional: Wine for Windows smoke tests on Linux
 
 The vendored dependencies are in `third_party/`:
@@ -87,6 +89,11 @@ cmake --build --preset android-debug
 # Android signed release APK
 cmake --preset android
 cmake --build --preset android
+
+# iOS game (needs NW_IOS_SDK and the overlay/SoundFont in the bundle)
+export NW_IOS_SDK=/path/to/iPhoneOS.sdk   # or Xcode.app, or Xcode.xip
+cmake --preset ios-game
+cmake --build --preset ios-game --target ios-game-ipa
 ```
 
 `NW_DEBUG_TOOLS` is off by default, including for builds configured without a
@@ -386,6 +393,88 @@ docker/build-releases.sh --ffpkg
 docker/build-releases.sh --ps5 --ffpkg
 ```
 
+iOS packaging is opt-in as well. Point `--ios-sdk` (or
+`NW_IOS_SDK`) at an extracted `iPhoneOS.sdk`, an `Xcode.app` tree, or a `.xip`
+file; the wrapper mounts it read-only and caches extracted SDKs and
+compiler-rt builtins under `NW_IOS_SDK_CACHE` (default
+`~/.cache/netwalk/ios-sdk`):
+
+```sh
+# Full game (needs an overlay; --no-overlay is rejected).
+docker/build-releases.sh --ios --ios-sdk /path/to/Xcode.xip \
+    --overlay /path/to/overlay.nw
+
+# Optional signing after the build.
+docker/build-releases.sh --ios --ios-sdk /path/to/Xcode.xip \
+    --overlay /path/to/overlay.nw --ios-sign adhoc
+docker/build-releases.sh --ios --ios-sdk /path/to/Xcode.xip \
+    --overlay /path/to/overlay.nw --ios-sign apple \
+    --ios-sign-p12 /path/to/development.p12 \
+    --ios-sign-password-file /path/to/p12-password \
+    --ios-provisioning-profile /path/to/profile.mobileprovision
+```
+
+The game stages only `NetWalk.ipa`; the intermediate `NetWalk.app` stays in
+`build/ios/`. The bundle contains `overlay.nw`, `gm.sf2`, and the generated
+icons. Because an `.app` is read-only on the device,
+`platforms/ios/ios_main.c` copies the overlay and SoundFont into
+`SDL_GetPrefPath("Gamos", "NetWalk")` on launch and runs the game from that
+writable directory; saves and temporary files stay there. The game uses the
+single 4 GiB-aligned guest window described in
+[PORTABLE_64BIT.md](PORTABLE_64BIT.md): with the linker-default `__PAGEZERO`
+it loads at `0x100000000`, `nw_guest_base` becomes `0x100000000`, and the iOS
+allocator places the heap, framebuffer, and scratch arena inside that window.
+No sub-4 GiB mapping is required, and the shipped build keeps the linker-default
+`__PAGEZERO` with no size override.
+
+The game supports portrait and landscape. `Info.plist` declares both
+orientations and `UIRequiresFullScreen`; `main()` does not override
+`SDL_HINT_ORIENTATIONS`, so the SDL window frame follows the orientation UIKit
+chose at launch. Presentation fits the fixed 4:3 canvas into the real window
+and centers the letterbox bars. The same four on-screen controls as the
+Android package are `EXIT`, `KEYBOARD`, `LOCK`/`UNLOCK`, and
+`L CLICK`/`R CLICK`. They are drawn directly in the letterbox bars when the
+bars are large enough; a near-4:3 window instead uses the pull-down card. The
+game does not write a run log or crash file; startup errors alone reach the
+unified log through `SDL_Log`.
+
+Without `--ios-sign` the apps are unsigned and cannot be installed on a stock
+device. `--ios-sign adhoc` adds an ad-hoc signature (useful with re-signing
+tools on jailbroken devices). `--ios-sign apple` signs with a PKCS#12
+certificate and optional entitlements through the `rcodesign` shipped in the
+image; for a normal device install also pass `--ios-provisioning-profile` so
+the profile is embedded. When `--ios-entitlements` is omitted, the build runs
+`tools/mobileprovision.py` against the profile to extract its Entitlements
+dictionary and checks that the profile covers the app's bundle identifier; a
+wildcard App ID is expanded to the concrete bundle identifier the way Xcode
+does. This makes the signature match the profile without a hand-written plist.
+Pass `--ios-entitlements` only to override that payload (for example for a
+special entitlement not present in the profile). Certificates and profiles are
+mounted read-only; passwords are passed only through the
+`NW_IOS_SIGN_P12_PASSWORD_FILE` file.
+
+`tools/mobileprovision.py` can also be used directly to inspect a profile:
+
+```sh
+tools/mobileprovision.py --input profile.mobileprovision
+tools/mobileprovision.py --input profile.mobileprovision \
+    --bundle-id com.gamos.netwalk \
+    --entitlements-out build/ios-entitlements.plist
+```
+
+Touch input goes through SDL's touch-to-mouse bridge and is delivered as the
+selected left or right click. The iOS bundle draws the same four controls as
+the Android package: `EXIT`, `KEYBOARD`, `LOCK`/`UNLOCK`, and
+`L CLICK`/`R CLICK`. When the letterbox bars can hold them, the buttons are
+drawn directly in the bars (a row in the bottom or top bar in portrait, two
+stacked buttons per side bar in wide landscape) and never cover the game. A
+near-4:3 window falls back to the pull-down card: only a small top tab is
+visible, and tapping it slides down a row of wide buttons across 70% of the
+screen. Tapping outside the card or leaving it idle for about four seconds
+closes it again. The software keyboard stays hidden until `KEYBOARD` is tapped;
+tapping anywhere outside the keyboard in the game window dismisses it. `LOCK`
+pins the current display orientation, including blocking a 180-degree turn.
+
 The desktop build is written to `dist/docker-releases/linux-x86_64/` and
 `dist/docker-releases/windows-x64-mingw/`. PS5 is skipped by default; `--ps5`
 adds `dist/docker-releases/PPSA99877/`, and `--require-ps5`, `--ffpkg`, or
@@ -470,6 +559,8 @@ Other runtime configuration:
 | `NW_WINDOW_SCALE=N` | render scale | Initial desktop window scale |
 | `NW_WINDOW_RESIZABLE=0` | enabled | Disable desktop window resizing |
 | `NW_SF2=PATH` | `gm.sf2` | Alternate General MIDI SoundFont |
+| `NW_LAYOUT_LOG=1` | off | High-proxy layout/allocation trace in `nw_layout.log` (see [PORTABLE_64BIT.md](PORTABLE_64BIT.md)) |
+| `NW_FORCE_HIGH=1` | auto | Force the Windows proxy allocator above 4 GiB even for the low image |
 | `SDL_PS5_DISPLAY=WxH` | `1920x1080` | PS5 VideoOut display size |
 
 ## Clean rebuild

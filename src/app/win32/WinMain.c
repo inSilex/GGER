@@ -56,6 +56,9 @@
 
 extern unsigned char nw_data_window[] __asm__("nw_data_window");
 extern void NwInstallCrashFilter(void);
+#if defined(_WIN64)
+extern void NwDumpLayout(const char *tag); /* round-1 instrumentation */
+#endif
 extern void ClearWritableDataSpanOnce(void);
 extern void InitializeGlobalsAndInstanceTag(void);
 extern int VerifyWin32sVersionOrReportStartupError(void);
@@ -138,6 +141,9 @@ NW_DIAG int InitializeAndRunWinMain(void)
 #endif
 
     NwInstallCrashFilter();
+#if defined(_WIN64)
+    NwDumpLayout("startup");
+#endif
 
     ClearWritableDataSpanOnce();
     InitializeGlobalsAndInstanceTag();
@@ -150,6 +156,9 @@ NW_DIAG int InitializeAndRunWinMain(void)
     CallRegisteredGlobalHookIfInstalled();
     ParseCommandLineIntoArgcArgv();
     (void)InitializeCrtRuntimeAndCtors();
+#if defined(_WIN64)
+    NwDumpLayout("post-init");
+#endif
 
     hInstance = (HINSTANCE)GetModuleHandleA(NULL);
     nLoopResult = RunMainMessageLoop(hInstance, (HINSTANCE)0, pszCommandLine,

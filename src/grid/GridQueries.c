@@ -128,8 +128,11 @@ NW_CTX_QUERY uint32_t NwGridCtxLayerFromRowCount(void)
     return 1u;
 }
 
-NW_CTX_QUERY uint32_t __stdcall NwGridCtxReadLayer(uint8_t *out)
+NW_CTX_QUERY uint32_t __stdcall NwGridCtxReadLayer(uint32_t outGuest)
 {
+    /* The VM passes a guest address for the destination byte. */
+    uint8_t *out = (uint8_t *)(uintptr_t)nw_guest_to_host(outGuest);
+
     *out = g_pCurGridCtx->bLayer;
     return 1u;
 }
@@ -259,8 +262,8 @@ NW_GRID_STATE uint32_t __stdcall NwGridCtxFlagsMatch(uint32_t mask)
 NW_GRID_STATE char * __stdcall NwCopyStringSwapArgs(uint32_t arg1,
                                                     uint32_t arg2)
 {
-    return CopyNulTerminatedString((char *)(uintptr_t)arg2,
-                                   (const char *)(uintptr_t)arg1);
+    return CopyNulTerminatedString((char *)(uintptr_t)nw_guest_to_host(arg2),
+                                   (const char *)(uintptr_t)nw_guest_to_host(arg1));
 }
 #endif /* NW_UNIT_GridStateHandlers */
 

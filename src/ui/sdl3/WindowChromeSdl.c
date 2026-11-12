@@ -33,6 +33,7 @@
 #include <SDL3/SDL_properties.h>
 #include <SDL3/SDL_mouse.h>
 #include <SDL3/SDL_keyboard.h>
+#include <SDL3/SDL_timer.h>
 #include <SDL3/SDL_error.h>
 
 #include "NwAppIcon.h"
@@ -146,6 +147,13 @@ NW_SDL_CODE int NwSdlRenderScale(void)
     /* The APK ships the standard-resolution overlay by default.  A build may
      * opt into a higher scale when it also packages matching assets. */
     scale = NW_ANDROID_RENDER_SCALE;
+#elif defined(NW_PORTABLE_IOS)
+#ifndef NW_IOS_RENDER_SCALE
+#define NW_IOS_RENDER_SCALE 1
+#endif
+    /* The IPA ships the standard-resolution overlay by default, matching the
+     * Android package.  NW_RENDER_SCALE can still override it at runtime. */
+    scale = NW_IOS_RENDER_SCALE;
 #else
     scale = 4;
 #endif
@@ -343,11 +351,50 @@ NW_SDL_CODE void NwSdlWindowViewport(int *px, int *py, int *pw, int *ph)
     NwSdlFitViewport4x3(ww, wh, px, py, pw, ph);
 }
 
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
 static int g_nwSdlAndroidPressed NW_SDL_BSS;
 static int g_nwSdlAndroidRotationLocked NW_SDL_BSS;
-static int g_nwSdlAndroidRotationLockedSynced NW_SDL_BSS;
 static int g_nwSdlAndroidMouseRight NW_SDL_BSS;
+static int g_nwSdlAndroidCardOpen NW_SDL_BSS;
+static int g_nwSdlAndroidCardAnimFrom NW_SDL_BSS;
+static Uint64 g_nwSdlAndroidCardAnimStart NW_SDL_BSS;
+static Uint64 g_nwSdlAndroidCardDeadline NW_SDL_BSS;
+#if defined(__ANDROID__)
+static int g_nwSdlAndroidRotationLockedSynced NW_SDL_BSS;
+#endif
+
+/* The controls are drawn in the letterbox bars whenever the bars are large
+ * enough.  Only when the window is too close to 4:3 do they move to a card
+ * that drops down from a small tab at the top of the window.  The tab is the
+ * only thing visible while the card is closed, so play stays unobstructed.
+ * Opening the card reveals a row of wide buttons across 70% of the window; it
+ * closes again after a few idle seconds or when the player taps outside it. */
+#define NW_SDL_CARD_SLIDE_MS 180u
+#define NW_SDL_CARD_HOLD_MS  4000u
+#define NW_SDL_CARD_WIDTH_PCT 70
+
+static int nw_android_card_progress_now(void)
+{
+    Uint64 elapsed;
+    int from;
+    int to;
+
+    to = g_nwSdlAndroidCardOpen ? NW_SDL_CARD_PROGRESS_FULL : 0;
+    if (g_nwSdlAndroidCardAnimStart == 0)
+        return to;
+    elapsed = SDL_GetTicks() - g_nwSdlAndroidCardAnimStart;
+    if (elapsed >= NW_SDL_CARD_SLIDE_MS)
+        return to;
+    from = g_nwSdlAndroidCardAnimFrom;
+    return from + (int)((to - from) * (int)elapsed /
+                        (int)NW_SDL_CARD_SLIDE_MS);
+}
+
+static void nw_android_note_interaction(void)
+{
+    if (g_nwSdlAndroidCardOpen)
+        g_nwSdlAndroidCardDeadline = SDL_GetTicks() + NW_SDL_CARD_HOLD_MS;
+}
 #endif
 
 NW_SDL_CODE static int nw_android_min(int a, int b)
@@ -355,104 +402,199 @@ NW_SDL_CODE static int nw_android_min(int a, int b)
     return a < b ? a : b;
 }
 
-/* Keep an Android control clear of a display cutout or system inset.  SDL
- * reports the safe rectangle in window coordinates; most immersive games get
- * the full surface, but this also works on devices that reserve an edge. */
-NW_SDL_CODE static void nw_android_clamp_button(SDL_Rect *pButton,
-                                                const SDL_Rect *pSafe)
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+/* Try to place the whole control set inside the letterbox bars so the game
+ * view stays fully visible.  Returns 1 for a single row in the top or bottom
+ * bar, 2 for two stacked columns in the side bars, and 0 when the window is
+ * too close to 4:3 and the pull-down card is needed. */
+static int nw_android_bar_metrics(const SDL_Rect *safe, int ww, int wh,
+                                  int pad, int gap, SDL_Rect *pButtons)
 {
-    if (pSafe == NULL || pSafe->w <= 0 || pSafe->h <= 0)
-        return;
-    if (pButton->w > pSafe->w)
-        pButton->w = pSafe->w;
-    if (pButton->h > pSafe->h)
-        pButton->h = pSafe->h;
-    if (pButton->x < pSafe->x)
-        pButton->x = pSafe->x;
-    if (pButton->y < pSafe->y)
-        pButton->y = pSafe->y;
-    if (pButton->x + pButton->w > pSafe->x + pSafe->w)
-        pButton->x = pSafe->x + pSafe->w - pButton->w;
-    if (pButton->y + pButton->h > pSafe->y + pSafe->h)
-        pButton->y = pSafe->y + pSafe->h - pButton->h;
-}
-
-/* Place one vertical stack of controls in a side bar. */
-NW_SDL_CODE static void nw_android_place_column(SDL_Rect *pButtons, int first,
-                                                int count, int barX, int barW,
-                                                int wh, int margin,
-                                                int maxW, int maxH)
-{
-    int w = nw_android_min(maxW, barW - margin * 2);
-    int h = nw_android_min(maxH, (wh - margin * (count + 1)) / count);
-    int total;
-    int y0;
-    int i;
-
-    if (w < 1)
-        w = 1;
-    if (h < 40)
-        h = 40;
-    total = h * count + margin * (count - 1);
-    if (total > wh - margin * 2) {
-        h = (wh - margin * 2 - margin * (count - 1)) / count;
-        if (h < 32)
-            h = 32;
-        total = h * count + margin * (count - 1);
-    }
-    y0 = (wh - total) / 2;
-    if (y0 < margin)
-        y0 = margin;
-    for (i = 0; i < count; i++) {
-        pButtons[first + i].x = (Sint16)(barX + barW / 2 - w / 2);
-        pButtons[first + i].y = (Sint16)(y0 + i * (h + margin));
-        pButtons[first + i].w = (Sint16)w;
-        pButtons[first + i].h = (Sint16)h;
-    }
-}
-
-/*
- * Place the Android-only controls in the unused bars around the centered 4:3
- * game viewport.  Landscape phones normally get two buttons on the left and
- * two in the right bar; devices with only one side bar stack all controls
- * there.  Portrait and other layouts with a wide bottom/top bar use a single
- * row in that bar.  A true 4:3 screen has no unused area, so the controls fall
- * back to a compact row at the top of the game viewport.
- *
- * The caller passes an array of NW_ANDROID_CONTROL_COUNT rectangles in control
- * id order: Exit, Keyboard, Lock, Click.
- */
-NW_SDL_CODE int NwSdlAndroidControlLayout(SDL_Rect *pButtons)
-{
-#if !defined(__ANDROID__)
-    (void)pButtons;
-    return 0;
-#else
-    SDL_Rect safe;
-    SDL_Rect buttons[NW_ANDROID_CONTROL_COUNT];
-    int ww = 0;
-    int wh = 0;
     int vx = 0;
     int vy = 0;
     int vw = 0;
     int vh = 0;
-    int left;
-    int right;
-    int top;
-    int bottom;
-    int unit;
-    int margin;
-    int bw;
-    int bh;
-    int canLeft;
-    int canRight;
-    int canTop;
-    int canBottom;
-    int hasSafe = 0;
+    int bandTop;
+    int bandBottom;
+    int bandHeight;
+    int buttonW;
+    int buttonH;
+    int rowW;
+    int rowH;
+    int rowX;
+    int rowY;
+    int colH;
+    int colY;
     int i;
 
-    if (pButtons == NULL ||
-        g_nwSdlWindow == NULL ||
+    NwSdlWindowViewport(&vx, &vy, &vw, &vh);
+
+    /* A horizontal row across the top or bottom bar, matching the card width
+     * and button proportions. */
+    rowW = ww * NW_SDL_CARD_WIDTH_PCT / 100;
+    if (rowW > safe->w - 8)
+        rowW = safe->w - 8;
+    if (rowW >= 160) {
+        buttonW = (rowW - pad * 2 -
+                   gap * (NW_ANDROID_CONTROL_COUNT - 1)) /
+                  NW_ANDROID_CONTROL_COUNT;
+        if (buttonW >= 28) {
+            buttonH = buttonW * 7 / 10;
+            if (buttonH < 44)
+                buttonH = 44;
+            if (buttonH > 64)
+                buttonH = 64;
+            rowH = buttonH + pad * 2;
+            rowX = safe->x + (safe->w - rowW) / 2;
+
+            /* Prefer the bottom bar, which sits near the player's thumbs. */
+            bandTop = vy + vh;
+            if (bandTop < safe->y)
+                bandTop = safe->y;
+            bandBottom = safe->y + safe->h;
+            if (bandBottom > wh)
+                bandBottom = wh;
+            bandHeight = bandBottom - bandTop;
+            if (bandTop >= vy + vh && bandHeight >= rowH + 4) {
+                rowY = bandTop + (bandHeight - rowH) / 2;
+                for (i = 0; i < NW_ANDROID_CONTROL_COUNT; i++) {
+                    pButtons[i].x = (Sint16)(rowX + pad +
+                                             i * (buttonW + gap));
+                    pButtons[i].y = (Sint16)(rowY + pad);
+                    pButtons[i].w = (Sint16)buttonW;
+                    pButtons[i].h = (Sint16)buttonH;
+                }
+                return 1;
+            }
+
+            bandTop = safe->y;
+            if (bandTop < 0)
+                bandTop = 0;
+            bandBottom = vy;
+            if (bandBottom > safe->y + safe->h)
+                bandBottom = safe->y + safe->h;
+            bandHeight = bandBottom - bandTop;
+            if (bandBottom <= vy && bandHeight >= rowH + 4) {
+                rowY = bandTop + (bandHeight - rowH) / 2;
+                for (i = 0; i < NW_ANDROID_CONTROL_COUNT; i++) {
+                    pButtons[i].x = (Sint16)(rowX + pad +
+                                             i * (buttonW + gap));
+                    pButtons[i].y = (Sint16)(rowY + pad);
+                    pButtons[i].w = (Sint16)buttonW;
+                    pButtons[i].h = (Sint16)buttonH;
+                }
+                return 1;
+            }
+        }
+    }
+
+    /* Two stacked buttons in each side bar when the window is wider than 4:3
+     * (the usual phone landscape layout).  EXIT/KEYBOARD stay on the left,
+     * LOCK/CLICK on the right, matching the old bar layout.  The columns stay
+     * inside the safe area, clear of a notch or rounded corner. */
+    if (vx > 0 && ww - (vx + vw) > 0) {
+        int leftBarL = 0;
+        int leftBarR = vx;
+        int rightBarL = vx + vw;
+        int rightBarR = ww;
+        int leftW;
+        int rightW;
+        int barW;
+        int leftX;
+        int rightX;
+
+        if (leftBarL < safe->x)
+            leftBarL = safe->x;
+        if (leftBarR > safe->x + safe->w)
+            leftBarR = safe->x + safe->w;
+        if (rightBarL < safe->x)
+            rightBarL = safe->x;
+        if (rightBarR > safe->x + safe->w)
+            rightBarR = safe->x + safe->w;
+        leftW = leftBarR - leftBarL;
+        rightW = rightBarR - rightBarL;
+        barW = leftW < rightW ? leftW : rightW;
+
+        buttonW = barW - pad * 2;
+        if (buttonW >= 40) {
+            buttonH = buttonW * 7 / 10;
+            if (buttonH < 44)
+                buttonH = 44;
+            if (buttonH > 64)
+                buttonH = 64;
+            colH = buttonH * 2 + gap + pad * 2;
+            bandTop = safe->y;
+            if (bandTop < 0)
+                bandTop = 0;
+            bandBottom = safe->y + safe->h;
+            if (bandBottom > wh)
+                bandBottom = wh;
+            bandHeight = bandBottom - bandTop;
+            if (bandHeight >= colH + 4) {
+                colY = bandTop + (bandHeight - colH) / 2;
+                leftX = leftBarL + (leftW - buttonW) / 2;
+                rightX = rightBarL + (rightW - buttonW) / 2;
+                pButtons[0].x = (Sint16)leftX;
+                pButtons[0].y = (Sint16)(colY + pad);
+                pButtons[0].w = (Sint16)buttonW;
+                pButtons[0].h = (Sint16)buttonH;
+                pButtons[1].x = (Sint16)leftX;
+                pButtons[1].y = (Sint16)(colY + pad + buttonH + gap);
+                pButtons[1].w = (Sint16)buttonW;
+                pButtons[1].h = (Sint16)buttonH;
+                pButtons[2].x = (Sint16)rightX;
+                pButtons[2].y = (Sint16)(colY + pad);
+                pButtons[2].w = (Sint16)buttonW;
+                pButtons[2].h = (Sint16)buttonH;
+                pButtons[3].x = (Sint16)rightX;
+                pButtons[3].y = (Sint16)(colY + pad + buttonH + gap);
+                pButtons[3].w = (Sint16)buttonW;
+                pButtons[3].h = (Sint16)buttonH;
+                return 2;
+            }
+        }
+    }
+    return 0;
+}
+#endif
+
+/* Resolve the control rectangles.  The letterbox bars get first claim on the
+ * controls; only when they do not fit there does the pull-down card supply
+ * the tab and card rectangles.  *pInBar is non-zero for either bar layout. */
+NW_SDL_CODE static int nw_android_metrics(SDL_Rect *pHandle, SDL_Rect *pCard,
+                                          SDL_Rect *pButtons, int *pInBar)
+{
+#if !defined(__ANDROID__) && !defined(NW_PORTABLE_IOS)
+    (void)pHandle;
+    (void)pCard;
+    (void)pButtons;
+    (void)pInBar;
+    return 0;
+#else
+    SDL_Rect safe;
+    SDL_Rect scratch[NW_ANDROID_CONTROL_COUNT];
+    SDL_Rect *buttons = pButtons != NULL ? pButtons : scratch;
+    int ww = 0;
+    int wh = 0;
+    int unit;
+    int cardW;
+    int cardX;
+    int cardY;
+    int cardH;
+    int handleW;
+    int handleH;
+    int handleX;
+    int handleY;
+    int pad;
+    int gap;
+    int avail;
+    int buttonW;
+    int buttonH;
+    int i;
+
+    if (pInBar != NULL)
+        *pInBar = 0;
+    if (g_nwSdlWindow == NULL ||
         !SDL_GetWindowSize(g_nwSdlWindow, &ww, &wh) ||
         ww <= 0 || wh <= 0)
         return 0;
@@ -461,148 +603,279 @@ NW_SDL_CODE int NwSdlAndroidControlLayout(SDL_Rect *pButtons)
     safe.y = 0;
     safe.w = ww;
     safe.h = wh;
-    if (SDL_GetWindowSafeArea(g_nwSdlWindow, &safe) &&
-        safe.w > 0 && safe.h > 0)
-        hasSafe = 1;
-    else {
+    if (!SDL_GetWindowSafeArea(g_nwSdlWindow, &safe) ||
+        safe.w <= 0 || safe.h <= 0) {
         safe.x = 0;
         safe.y = 0;
         safe.w = ww;
         safe.h = wh;
     }
 
-    NwSdlWindowViewport(&vx, &vy, &vw, &vh);
-    left = vx;
-    right = ww - (vx + vw);
-    top = vy;
-    bottom = wh - (vy + vh);
     unit = nw_android_min(ww, wh);
-    margin = unit / 24;
-    if (margin < 8)
-        margin = 8;
-    if (margin > 48)
-        margin = 48;
-    bw = unit / 5;
-    if (bw < 72)
-        bw = 72;
-    bh = unit / 8;
-    if (bh < 64)
-        bh = 64;
+    cardW = ww * NW_SDL_CARD_WIDTH_PCT / 100;
+    if (cardW > safe.w - 8)
+        cardW = safe.w - 8;
 
-    canLeft = left >= 64 + margin * 2;
-    canRight = right >= 64 + margin * 2;
-    canTop = top >= 64 + margin * 2;
-    canBottom = bottom >= 64 + margin * 2;
+    pad = cardW / 48;
+    if (pad < 8)
+        pad = 8;
+    if (pad > 18)
+        pad = 18;
+    gap = cardW / 64;
+    if (gap < 6)
+        gap = 6;
+    if (gap > 12)
+        gap = 12;
 
-    if (canLeft && canRight) {
-        int leftCount = NW_ANDROID_CONTROL_COUNT / 2;
-        int rightCount = NW_ANDROID_CONTROL_COUNT - leftCount;
-
-        nw_android_place_column(buttons, 0, leftCount, 0, left,
-                                wh, margin, bw, bh);
-        nw_android_place_column(buttons, leftCount, rightCount,
-                                vx + vw, right, wh, margin, bw, bh);
-    } else if (canLeft || canRight) {
-        int barX = canLeft ? 0 : vx + vw;
-        int barW = canLeft ? left : right;
-
-        nw_android_place_column(buttons, 0, NW_ANDROID_CONTROL_COUNT,
-                                barX, barW, wh, margin, bw, bh);
-    } else if (canBottom || canTop) {
-        int barY = canBottom ? vy + vh : 0;
-        int barH = canBottom ? bottom : top;
-        int w = nw_android_min(bw,
-                               ww / NW_ANDROID_CONTROL_COUNT - margin * 2);
-        int h = nw_android_min(bh, barH - margin * 2);
-        int total;
-        int x0;
-        int y;
-
-        if (w < 56)
-            w = 56;
-        if (h < 56)
-            h = 56;
-        if (h > w)
-            h = w;
-        total = w * NW_ANDROID_CONTROL_COUNT +
-                margin * (NW_ANDROID_CONTROL_COUNT - 1);
-        if (total > ww - margin * 2) {
-            w = (ww - margin * 2 -
-                 margin * (NW_ANDROID_CONTROL_COUNT - 1)) /
-                NW_ANDROID_CONTROL_COUNT;
-            if (w < 40)
-                w = 40;
-            if (h > w)
-                h = w;
-            total = w * NW_ANDROID_CONTROL_COUNT +
-                    margin * (NW_ANDROID_CONTROL_COUNT - 1);
-        }
-        if (h > barH - margin * 2)
-            h = barH - margin * 2;
-        if (h < 40)
-            h = 40;
-        x0 = (ww - total) / 2;
-        if (x0 < margin)
-            x0 = margin;
-        y = barY + barH / 2 - h / 2;
-        for (i = 0; i < NW_ANDROID_CONTROL_COUNT; i++) {
-            buttons[i].x = (Sint16)(x0 + i * (w + margin));
-            buttons[i].y = (Sint16)y;
-            buttons[i].w = (Sint16)w;
-            buttons[i].h = (Sint16)h;
-        }
-    } else {
-        /* No letterbox: keep the center clear and use a compact top row. */
-        int w = nw_android_min(unit / 4,
-                               vw / NW_ANDROID_CONTROL_COUNT);
-        int h = nw_android_min(unit / 10, vh / 6);
-        int total;
-        int x0;
-        int y0;
-
-        if (w < 48)
-            w = 48;
-        if (h < 40)
-            h = 40;
-        total = w * NW_ANDROID_CONTROL_COUNT +
-                margin * (NW_ANDROID_CONTROL_COUNT - 1);
-        if (total > vw - margin * 2) {
-            w = (vw - margin * 2 -
-                 margin * (NW_ANDROID_CONTROL_COUNT - 1)) /
-                NW_ANDROID_CONTROL_COUNT;
-            if (w < 40)
-                w = 40;
-            total = w * NW_ANDROID_CONTROL_COUNT +
-                    margin * (NW_ANDROID_CONTROL_COUNT - 1);
-        }
-        x0 = vx + (vw - total) / 2;
-        if (x0 < vx + margin)
-            x0 = vx + margin;
-        y0 = vy + margin;
-        for (i = 0; i < NW_ANDROID_CONTROL_COUNT; i++) {
-            buttons[i].x = (Sint16)(x0 + i * (w + margin));
-            buttons[i].y = (Sint16)y0;
-            buttons[i].w = (Sint16)w;
-            buttons[i].h = (Sint16)h;
-        }
+    /* Controls that fit entirely inside a black bar never cover the game, so
+     * they are drawn directly with no tab or sliding card. */
+    if (nw_android_bar_metrics(&safe, ww, wh, pad, gap, buttons)) {
+        if (pInBar != NULL)
+            *pInBar = 1;
+        return 1;
     }
 
-    if (hasSafe) {
-        for (i = 0; i < NW_ANDROID_CONTROL_COUNT; i++)
-            nw_android_clamp_button(&buttons[i], &safe);
+    if (cardW < 160)
+        return 0;
+    cardX = safe.x + (safe.w - cardW) / 2;
+
+    handleH = unit / 16;
+    if (handleH < 22)
+        handleH = 22;
+    if (handleH > 32)
+        handleH = 32;
+    handleW = cardW * 28 / 100;
+    if (handleW < 72)
+        handleW = 72;
+    if (handleW > 180)
+        handleW = 180;
+    if (handleW > cardW - 16)
+        handleW = cardW - 16;
+    if (handleW < 48)
+        handleW = 48;
+    handleX = safe.x + (safe.w - handleW) / 2;
+    handleY = safe.y + 2;
+
+    avail = cardW - pad * 2 - gap * (NW_ANDROID_CONTROL_COUNT - 1);
+    if (avail < NW_ANDROID_CONTROL_COUNT * 24)
+        return 0;
+    buttonW = avail / NW_ANDROID_CONTROL_COUNT;
+    buttonH = buttonW * 7 / 10;
+    if (buttonH < 44)
+        buttonH = 44;
+    if (buttonH > 64)
+        buttonH = 64;
+    cardH = pad * 2 + buttonH;
+    cardY = handleY + handleH;
+
+    if (pHandle != NULL) {
+        pHandle->x = (Sint16)handleX;
+        pHandle->y = (Sint16)handleY;
+        pHandle->w = (Sint16)handleW;
+        pHandle->h = (Sint16)handleH;
     }
-    for (i = 0; i < NW_ANDROID_CONTROL_COUNT; i++)
-        pButtons[i] = buttons[i];
+    if (pCard != NULL) {
+        pCard->x = (Sint16)cardX;
+        pCard->y = (Sint16)cardY;
+        pCard->w = (Sint16)cardW;
+        pCard->h = (Sint16)cardH;
+    }
+    if (pButtons != NULL) {
+        for (i = 0; i < NW_ANDROID_CONTROL_COUNT; i++) {
+            pButtons[i].x = (Sint16)(cardX + pad +
+                                     i * (buttonW + gap));
+            pButtons[i].y = (Sint16)(cardY + pad);
+            pButtons[i].w = (Sint16)buttonW;
+            pButtons[i].h = (Sint16)buttonH;
+        }
+    }
     return 1;
+#endif
+}
+
+/* Non-zero when the controls live in the letterbox bars and no card is used. */
+NW_SDL_CODE int NwSdlAndroidControlsInBar(void)
+{
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+    int inBar = 0;
+
+    if (!nw_android_metrics(NULL, NULL, NULL, &inBar))
+        return 0;
+    return inBar;
+#else
+    return 0;
+#endif
+}
+
+NW_SDL_CODE int NwSdlAndroidControlCardLayout(SDL_Rect *pHandle,
+                                              SDL_Rect *pCard)
+{
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+    int inBar = 0;
+
+    if (!nw_android_metrics(pHandle, pCard, NULL, &inBar) || inBar)
+        return 0;
+    return 1;
+#else
+    (void)pHandle;
+    (void)pCard;
+    return 0;
+#endif
+}
+
+/* Final button rectangles.  VideoSdl.c clips them to the visible card height
+ * while the card is sliding. */
+NW_SDL_CODE int NwSdlAndroidControlLayout(SDL_Rect *pButtons)
+{
+#if !defined(__ANDROID__) && !defined(NW_PORTABLE_IOS)
+    (void)pButtons;
+    return 0;
+#else
+    return nw_android_metrics(NULL, NULL, pButtons, NULL);
+#endif
+}
+
+NW_SDL_CODE int NwSdlAndroidControlCardProgress(void)
+{
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+    if (NwSdlAndroidControlsInBar())
+        return 0;
+    return nw_android_card_progress_now();
+#else
+    return 0;
+#endif
+}
+
+NW_SDL_CODE int NwSdlAndroidControlCardIsOpen(void)
+{
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+    return g_nwSdlAndroidCardOpen;
+#else
+    return 0;
+#endif
+}
+
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+static void nw_android_card_set_open(int open)
+{
+    int from;
+    Uint64 now;
+
+    if (g_nwSdlAndroidCardOpen == open) {
+        if (open)
+            nw_android_note_interaction();
+        return;
+    }
+    from = nw_android_card_progress_now();
+    now = SDL_GetTicks();
+    g_nwSdlAndroidCardAnimFrom = from;
+    g_nwSdlAndroidCardOpen = open;
+    g_nwSdlAndroidCardAnimStart = now;
+    if (open)
+        g_nwSdlAndroidCardDeadline = now + NW_SDL_CARD_HOLD_MS;
+}
+#endif
+
+NW_SDL_CODE void NwSdlAndroidControlCardToggle(void)
+{
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+    if (NwSdlAndroidControlsInBar())
+        return;
+    nw_android_card_set_open(g_nwSdlAndroidCardOpen ? 0 : 1);
+#endif
+}
+
+NW_SDL_CODE void NwSdlAndroidControlCardClose(void)
+{
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+    if (NwSdlAndroidControlsInBar())
+        return;
+    nw_android_card_set_open(0);
+#endif
+}
+
+/* Called once per game frame.  Returns non-zero while the card is moving or
+ * when the idle deadline just closed it, so the caller can present the new
+ * frame even if the game itself produced no drawing. */
+NW_SDL_CODE int NwSdlAndroidControlCardTick(void)
+{
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+    Uint64 now = SDL_GetTicks();
+
+    if (NwSdlAndroidControlsInBar()) {
+        /* Rotation can move the controls into the bars while the card is
+         * open; drop that state without animating. */
+        if (g_nwSdlAndroidCardOpen || g_nwSdlAndroidCardAnimStart != 0) {
+            g_nwSdlAndroidCardOpen = 0;
+            g_nwSdlAndroidCardAnimFrom = 0;
+            g_nwSdlAndroidCardAnimStart = 0;
+            g_nwSdlAndroidCardDeadline = 0;
+            return 1;
+        }
+        return 0;
+    }
+    if (g_nwSdlAndroidCardOpen && g_nwSdlAndroidPressed == 0 &&
+        g_nwSdlAndroidCardDeadline != 0 &&
+        now >= g_nwSdlAndroidCardDeadline) {
+        nw_android_card_set_open(0);
+        return 1;
+    }
+    if (g_nwSdlAndroidCardAnimStart != 0 &&
+        now - g_nwSdlAndroidCardAnimStart < NW_SDL_CARD_SLIDE_MS + 60u)
+        return 1;
+    return 0;
+#else
+    return 0;
+#endif
+}
+
+NW_SDL_CODE int NwSdlAndroidControlHandleHit(int x, int y)
+{
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+    SDL_Rect handle;
+
+    if (!NwSdlAndroidControlCardLayout(&handle, NULL))
+        return 0;
+    return x >= handle.x && x < handle.x + handle.w &&
+           y >= handle.y && y < handle.y + handle.h;
+#else
+    (void)x;
+    (void)y;
+    return 0;
+#endif
+}
+
+NW_SDL_CODE int NwSdlAndroidControlCardHit(int x, int y)
+{
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+    SDL_Rect handle;
+    SDL_Rect card;
+
+    if (!NwSdlAndroidControlCardLayout(&handle, &card))
+        return 0;
+    if (x >= handle.x && x < handle.x + handle.w &&
+        y >= handle.y && y < handle.y + handle.h)
+        return 1;
+    if (NwSdlAndroidControlCardProgress() <= 0)
+        return 0;
+    return x >= card.x && x < card.x + card.w &&
+           y >= card.y && y < card.y + card.h;
+#else
+    (void)x;
+    (void)y;
+    return 0;
 #endif
 }
 
 NW_SDL_CODE int NwSdlAndroidControlHit(int x, int y)
 {
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
     SDL_Rect buttons[NW_ANDROID_CONTROL_COUNT];
     int i;
 
+    if (!NwSdlAndroidControlsInBar() &&
+        NwSdlAndroidControlCardProgress() < 200)
+        return 0;
     if (!NwSdlAndroidControlLayout(buttons))
         return 0;
     for (i = 0; i < NW_ANDROID_CONTROL_COUNT; i++) {
@@ -620,7 +893,7 @@ NW_SDL_CODE int NwSdlAndroidControlHit(int x, int y)
 
 NW_SDL_CODE int NwSdlAndroidControlPressed(void)
 {
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
     return g_nwSdlAndroidPressed;
 #else
     return 0;
@@ -629,8 +902,9 @@ NW_SDL_CODE int NwSdlAndroidControlPressed(void)
 
 NW_SDL_CODE void NwSdlAndroidControlPress(int id)
 {
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
     g_nwSdlAndroidPressed = id;
+    nw_android_note_interaction();
 #else
     (void)id;
 #endif
@@ -638,26 +912,51 @@ NW_SDL_CODE void NwSdlAndroidControlPress(int id)
 
 NW_SDL_CODE void NwSdlAndroidControlCancel(void)
 {
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
     g_nwSdlAndroidPressed = 0;
+#endif
+}
+
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+/* Hide the on-screen keyboard if it is showing.  Returns 1 when it was
+ * visible.  SDL_StopTextInput() only hides the Android IME while the
+ * screen-keyboard hint still requests it, so Android restores text input with
+ * the hint disabled afterwards; a hardware keyboard keeps delivering text. */
+NW_SDL_CODE static int nw_android_hide_keyboard(void)
+{
+    if (g_nwSdlWindow == NULL)
+        return 0;
+    if (!SDL_ScreenKeyboardShown(g_nwSdlWindow))
+        return 0;
+    SDL_StopTextInput(g_nwSdlWindow);
+#if defined(__ANDROID__)
+    (void)SDL_SetHint(SDL_HINT_ENABLE_SCREEN_KEYBOARD, "0");
+    (void)SDL_StartTextInput(g_nwSdlWindow);
+#endif
+    return 1;
+}
+#endif
+
+/* Dismiss the on-screen keyboard from an outside tap or click. */
+NW_SDL_CODE int NwSdlAndroidHideKeyboard(void)
+{
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+    return nw_android_hide_keyboard();
+#else
+    return 0;
 #endif
 }
 
 NW_SDL_CODE int NwSdlAndroidToggleKeyboard(void)
 {
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
     if (g_nwSdlWindow == NULL)
         return 0;
-    if (SDL_ScreenKeyboardShown(g_nwSdlWindow)) {
-        /* SDL_StopTextInput() only hides the IME while the screen-keyboard hint
-         * still requests it.  Hide first, then restore text input with the hint
-         * disabled so a hardware keyboard keeps delivering text. */
-        SDL_StopTextInput(g_nwSdlWindow);
-        (void)SDL_SetHint(SDL_HINT_ENABLE_SCREEN_KEYBOARD, "0");
-        (void)SDL_StartTextInput(g_nwSdlWindow);
+    if (nw_android_hide_keyboard())
         return 0;
-    }
+#if defined(__ANDROID__)
     (void)SDL_SetHint(SDL_HINT_ENABLE_SCREEN_KEYBOARD, "1");
+#endif
     if (!SDL_StartTextInput(g_nwSdlWindow))
         return 0;
     return 1;
@@ -671,11 +970,14 @@ NW_SDL_CODE int NwSdlAndroidToggleKeyboard(void)
  * rotation lock, or click-mode toggle) so the input unit owns game semantics. */
 NW_SDL_CODE int NwSdlAndroidControlRelease(int x, int y)
 {
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
     int pressed = g_nwSdlAndroidPressed;
     g_nwSdlAndroidPressed = 0;
-    if (pressed != 0 && NwSdlAndroidControlHit(x, y) == pressed)
-        return pressed;
+    if (pressed != 0) {
+        nw_android_note_interaction();
+        if (NwSdlAndroidControlHit(x, y) == pressed)
+            return pressed;
+    }
     return 0;
 #else
     (void)x;
@@ -789,6 +1091,51 @@ NW_SDL_CODE int NwSdlAndroidToggleRotationLock(void)
     g_nwSdlAndroidRotationLocked = locked;
     g_nwSdlAndroidRotationLockedSynced = 1;
     return locked;
+#elif defined(NW_PORTABLE_IOS)
+    /* UIKit reads SDL_HINT_ORIENTATIONS from the view controller's
+     * supportedInterfaceOrientations, so pinning the current display
+     * orientation to a single value is enough to stop further rotation.
+     * Unlocking restores the full set from Info.plist.
+     *
+     * SDL deliberately maps the landscape names to the opposite UIKit
+     * constants (see the openradar note in SDL_uikitmodes.m): the display
+     * orientation SDL calls LANDSCAPE is UIInterfaceOrientationLandscapeRight.
+     * Using SDL's own naming here without that reversal would pin the device
+     * to the opposite landscape and let a 180-degree turn through. */
+    const char *mask;
+
+    if (g_nwSdlWindow == NULL)
+        return g_nwSdlAndroidRotationLocked;
+    if (g_nwSdlAndroidRotationLocked) {
+        (void)SDL_SetHint(SDL_HINT_ORIENTATIONS,
+                          "Portrait PortraitUpsideDown "
+                          "LandscapeLeft LandscapeRight");
+        g_nwSdlAndroidRotationLocked = 0;
+        return 0;
+    }
+    switch (SDL_GetCurrentDisplayOrientation(
+                SDL_GetDisplayForWindow(g_nwSdlWindow))) {
+    case SDL_ORIENTATION_LANDSCAPE:
+        mask = "LandscapeRight";
+        break;
+    case SDL_ORIENTATION_LANDSCAPE_FLIPPED:
+        mask = "LandscapeLeft";
+        break;
+    case SDL_ORIENTATION_PORTRAIT:
+        mask = "Portrait";
+        break;
+    case SDL_ORIENTATION_PORTRAIT_FLIPPED:
+        mask = "PortraitUpsideDown";
+        break;
+    default:
+        mask = NULL;
+        break;
+    }
+    if (mask != NULL) {
+        (void)SDL_SetHint(SDL_HINT_ORIENTATIONS, mask);
+        g_nwSdlAndroidRotationLocked = 1;
+    }
+    return g_nwSdlAndroidRotationLocked;
 #else
     return 0;
 #endif
@@ -798,6 +1145,8 @@ NW_SDL_CODE int NwSdlAndroidRotationLocked(void)
 {
 #if defined(__ANDROID__)
     nw_android_sync_rotation_locked();
+    return g_nwSdlAndroidRotationLocked;
+#elif defined(NW_PORTABLE_IOS)
     return g_nwSdlAndroidRotationLocked;
 #else
     return 0;
@@ -809,7 +1158,7 @@ NW_SDL_CODE int NwSdlAndroidRotationLocked(void)
  * buttons. */
 NW_SDL_CODE int NwSdlAndroidMouseRight(void)
 {
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
     return g_nwSdlAndroidMouseRight;
 #else
     return 0;
@@ -818,7 +1167,7 @@ NW_SDL_CODE int NwSdlAndroidMouseRight(void)
 
 NW_SDL_CODE int NwSdlAndroidToggleMouseRight(void)
 {
-#if defined(__ANDROID__)
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
     g_nwSdlAndroidMouseRight = g_nwSdlAndroidMouseRight ? 0 : 1;
     return g_nwSdlAndroidMouseRight;
 #else
@@ -914,9 +1263,10 @@ NW_SDL_CODE void NwSdlEnforceWindowAspect(void)
     int targetH;
     int delta;
 
-#if defined(__ANDROID__)
-    /* The Android surface follows the display and the keyboard insets; the
-     * game viewport is fitted during presentation, not by resizing the window. */
+#if defined(__ANDROID__) || defined(NW_PORTABLE_IOS)
+    /* The Android/iOS surface follows the display and (on Android) the keyboard
+     * insets; the game viewport is fitted during presentation, not by
+     * resizing the window. */
     return;
 #endif
     if (g_nwSdlWindow == NULL || adjusting ||
@@ -1165,6 +1515,10 @@ NW_SDL_CODE void CreatePlayerMainWindow(void *pPlayerCfg)
      * Keep it resizable so SDL's orientation helper honors the landscape hint,
      * and let the renderer fit the 4:3 game into the resulting surface. */
     flags = SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE;
+#elif defined(NW_PORTABLE_IOS)
+    /* UIKit always makes the window the native screen surface.  Borderless
+     * hides the status bar; presentation letterboxes the 4:3 game. */
+    flags = SDL_WINDOW_BORDERLESS | SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE;
 #endif
 
     /* Keep the Win32 oracle's DPI virtualization.  This must precede the
@@ -1313,13 +1667,21 @@ NW_SDL_CODE void CreatePlayerMainWindow(void *pPlayerCfg)
     NW_NATIVE_BOOT("window_shown");
     (void)SDL_RaiseWindow(g_nwSdlWindow);
     /* Text input is the portable WM_CHAR equivalent; printable keys arrive as
-     * SDL_EVENT_TEXT_INPUT and are forwarded to the shipped decoder. */
+     * SDL_EVENT_TEXT_INPUT and are forwarded to the shipped decoder.  iOS also
+     * shows the software keyboard on SDL_StartTextInput(), so open and close
+     * it once to keep the keyboard hidden until the KEYBOARD control is used. */
+#if defined(NW_PORTABLE_IOS)
+    (void)SDL_StartTextInput(g_nwSdlWindow);
+    SDL_StopTextInput(g_nwSdlWindow);
+#else
     SDL_StartTextInput(g_nwSdlWindow);
+#endif
 
     /* Seed the size globals now; the SDL_EVENT_WINDOW_RESIZED path keeps them
-     * current.  The save copies remain the requested values. */
+     * current.  The save copies remain the requested logical values: the
+     * engine's layout is a fixed 640x480 canvas, and presentation/input map
+     * through the real window size instead of overwriting these. */
     {
-        (void)SDL_GetWindowSize(g_nwSdlWindow, &clientW, &clientH);
         nw_publish_client_size((int)g_dwClientW, (int)g_dwClientH);
     }
 }

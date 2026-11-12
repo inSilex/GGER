@@ -59,8 +59,8 @@ FlushPendingSurfaceRectsAndReseedRandom(char bDrawPending)
     uint32_t *pNode = (uint32_t *)(uintptr_t)NW_WINDOW_PTR_VALUE(0x11b0);
 
     while (pNode != NULL) {
-        uint32_t *pNext = (uint32_t *)(uintptr_t)
-                          (*(uint32_t *)(void *)((uint8_t *)(void *)pNode + 0x10));
+        uint32_t *pNext = (uint32_t *)(uintptr_t)nw_guest_to_host(
+                          (*(uint32_t *)(void *)((uint8_t *)(void *)pNode + 0x10)));
         if (bDrawPending != 0) {
 
             BlitRectOrTileGridToPlayerSurface(
@@ -1369,7 +1369,7 @@ void NETWALK_CALL LoadNetwalkTileImageFile(const char *pszFilename)
     /* Trailing blob tacked on after the pixel array. */
     (void)ReadStreamChunkCrLfNormalized(
         (uint32_t)nTrackedSlot,
-        (void *)(uintptr_t)g_pNetwalkImageRecord->dwReserved2,
+        (void *)(uintptr_t)nw_guest_to_host(g_pNetwalkImageRecord->dwReserved2),
         g_pNetwalkImageRecord->dwTrailingBytes);
 
     CloseTrackedHandleSlot(nTrackedSlot);
@@ -1555,7 +1555,7 @@ BOOL TryPlayStartupMovieWithWindowFallback(void)
 
     DispatchQueuedNonInputMessages();
 
-    pRecord      = (TileRecord *)(uintptr_t)g_pdwTileRecord;
+    pRecord      = (TileRecord *)(uintptr_t)nw_guest_to_host(g_pdwTileRecord);
     bMoviePlayed = PlayStartupMovieWithMessagePumpAndTeardown(
                        pRecord->dwMovieRectWord3,      /* arg1: [EAX+0x34] */
                        pRecord->dwMovieRectWord2,      /* arg2: [EAX+0x30] */

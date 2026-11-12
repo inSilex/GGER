@@ -76,18 +76,48 @@ extern nw_host_ptr_t g_nw_window_ptr_slots[NW_WINDOW_BYTES / 4u];
 #endif
 
 /*
- * Explicit conversion helpers for code that has a guest address rather than
- * a native pointer.  The low-address x86-64 compatibility target currently
- * uses a zero-extending conversion; a future guest arena keeps the same API.
+ * Base of the single 4 GiB guest window.
+ *
+ * Zero while every guest object lives below 4 GiB: the original 32-bit
+ * layout, and the Linux/Android/Windows-low targets.  Guest addresses are
+ * then plain host addresses and both conversions are identities.
+ *
+ * iOS cannot obtain memory below 4 GiB, so the whole guest world (data
+ * window, pointer side table, heap arenas and every guest allocation) is
+ * placed in one 4 GiB-aligned window and a guest address becomes an offset
+ * from this base.  The Windows high-image proxy build exercises the same
+ * layout on a desktop host.
+ *
+ * The base is always 4 GiB-aligned, so `(uint32_t)(uintptr_t)host` still
+ * yields the guest offset for any host pointer inside the window: the store
+ * direction needs no change, only loads need nw_guest_to_host().
+ */
+extern uintptr_t nw_guest_base;
+
+/*
+ * Guest zero is the null pointer, never an object: the window reserves its
+ * first 64 KiB and every guest allocation starts above it.  Preserving the
+ * null through both conversions keeps every `if (p)` / `p != NULL` test on a
+ * converted guest pointer correct.  Without this, nw_guest_to_host(0) would
+ * yield nw_guest_base (a non-null address) and list terminators would walk
+ * into the unmapped start of the window.
+ *
+ * Note that passing an already-converted host pointer here is idempotent
+ * because nw_guest_base is 4 GiB-aligned, and no live object sits at guest
+ * offset 0, so the null special case cannot misclassify one.
  */
 static inline nw_host_ptr_t nw_guest_to_host(nw_guest_addr_t guest)
 {
-    return (nw_host_ptr_t)(uintptr_t)guest;
+    return guest != 0u
+        ? (nw_host_ptr_t)(nw_guest_base + (uintptr_t)guest)
+        : (nw_host_ptr_t)0;
 }
 
 static inline nw_guest_addr_t nw_host_to_guest(const void *host)
 {
-    return (nw_guest_addr_t)(uintptr_t)host;
+    return (uintptr_t)host != 0u
+        ? (nw_guest_addr_t)((uintptr_t)host - nw_guest_base)
+        : 0u;
 }
 
 static inline uint32_t nw_guest_ld32(const void *p)

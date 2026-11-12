@@ -14,7 +14,7 @@ The current game integration is NetWalk. FlipFlop is the second verified
 Gamos 1.51 release and is used to confirm that the recovered runtime is shared
 by both titles.
 
-GGER builds four targets from one source tree:
+GGER builds five targets from one source tree:
 
 - **Linux x86-64**: dynamically linked ELF with runtime-loaded X11 and static
   PulseAudio.
@@ -22,7 +22,12 @@ GGER builds four targets from one source tree:
   vendored source.
 - **PlayStation 5**: native title (`PPSA99877`) with a signed `eboot.bin`.
 - **Android**: `arm64-v8a` and `x86_64` APK with a centered 4:3 game view,
-  immersive full screen, and touch controls in the unused screen area.
+  immersive full screen, and touch controls that use the black bars when they
+  fit and a pull-down card otherwise.
+- **iOS**: arm64 `.app`/`.ipa` cross-built in Docker from a user-supplied Apple
+  SDK, with optional ad-hoc or Apple signing. Touch uses SDL's touch-to-mouse
+  bridge, and the same bar/card control layout is available in both
+  orientations.
 
 ## Reference releases
 
@@ -72,7 +77,7 @@ With Docker installed, choose one of these paths.
 docker/build-releases.sh --no-overlay
 ```
 
-This builds Linux and Windows without `overlay.nw`. PS5 and Android are
+This builds Linux and Windows without `overlay.nw`. PS5, Android, and iOS are
 skipped by default; add `--ps5` to include the native PS5 title. The executables
 are not playable until an overlay is placed beside them.
 
@@ -87,7 +92,9 @@ Windows, and names the Linux and Windows executables after the lowercased
 reference filename. With `NETWALK.EXE`, both desktop directories contain
 `netwalk.exe`. Add `--ps5` for the native PS5 title. To include an Android APK,
 add `--android-debug` for a debug-signed APK; for a release-signed APK, export
-the four `NW_ANDROID_*` variables and pass `--android`. Outputs are staged under
+the four `NW_ANDROID_*` variables and pass `--android`. iOS is opt-in: pass
+`--ios` with `--ios-sdk` (an `iPhoneOS.sdk`, `Xcode.app`, or `.xip`) and an
+overlay to stage `ios/NetWalk.ipa`. Outputs are staged under
 `dist/docker-releases/`.
 
 Run the Linux build with:
@@ -101,7 +108,7 @@ The first run builds `netwalk-build:latest`. See
 [docker/README.md](docker/README.md) for signing, overlay, and target-selection
 options.
 
-Windows, PS5, Android, debug builds, and release signing are covered in
+Windows, PS5, Android, iOS, debug builds, and release signing are covered in
 [docs/BUILD.md](docs/BUILD.md), [docs/PS5.md](docs/PS5.md), and
 [docker/README.md](docker/README.md).
 
@@ -109,7 +116,7 @@ Windows, PS5, Android, debug builds, and release signing are covered in
 
 | Document | Contents |
 | --- | --- |
-| [Build and platform targets](docs/BUILD.md) | Prerequisites, presets, Android/PS5/Windows builds, signing, Docker |
+| [Build and platform targets](docs/BUILD.md) | Prerequisites, presets, Android/iOS/PS5/Windows builds, signing, Docker |
 | [Controls](docs/CONTROLS.md) | Keyboard, mouse, gamepad, PS5 IME, Android touch controls |
 | [Saves and first-run behavior](docs/SAVES.md) | Save format, first-run creation, Android/PS5 paths |
 | [Architecture](docs/ARCHITECTURE.md) | Source layout, portableizer, platform layers, rendering |
@@ -119,7 +126,7 @@ Windows, PS5, Android, debug builds, and release signing are covered in
 | [Asset pipeline](docs/assets/EXTRACTION.md) | Overlay extraction, sprite dumps, high-resolution packs |
 | [Testing](docs/TESTING.md) | Build gates, packaging checks, runtime checks |
 | [Developer tools](tools/documentation/README.md) | Per-tool reference and Python environment |
-| [Docker release builds](docker/README.md) | Reproducible Linux, Windows, Android, and PS5 packaging |
+| [Docker release builds](docker/README.md) | Reproducible Linux, Windows, Android, iOS, and PS5 packaging |
 
 ## Naming
 

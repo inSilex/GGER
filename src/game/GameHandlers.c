@@ -85,8 +85,11 @@ NW_NATIVE_ADAPTER uint32_t __stdcall NwRunOpcodeStreamAtArgIndex(uint32_t index)
     return ExecuteOpcodeStreamPreservingGlobals((const uint32_t *)pEntry);
 }
 
-NW_NATIVE_ADAPTER uint32_t __stdcall NwStringContainsLiveInput(const char *pText)
+NW_NATIVE_ADAPTER uint32_t __stdcall NwStringContainsLiveInput(uint32_t textGuest)
 {
+    /* The VM passes a guest address, not a host pointer. */
+    const char *pText = (const char *)(uintptr_t)nw_guest_to_host(textGuest);
+
     while (*pText != '\0') {
         if ((uint8_t)*pText == g_bLiveInputByte) {
             return 1u;
@@ -114,7 +117,7 @@ NW_NATIVE_ADAPTER uint32_t __stdcall NwDispatchPendingRefSelField(uint32_t index
         uint8_t *pEntry = NWPP(0x62fc) + ((uint32_t)index * 8u);
         const uint32_t guestRecord = *(const uint32_t *)(const void *)(pEntry + 4);
         NwPublishAudioSlotAndMix(1, 0, -1,
-                                 (const void *)(uintptr_t)guestRecord);
+                                 (const void *)(uintptr_t)nw_guest_to_host(guestRecord));
     }
     return 1u;
 }
@@ -173,7 +176,7 @@ NW_SAVE_CMD uint32_t __stdcall NwSaveDispatchByMode(uint32_t mode,
 
 NW_SAVE_CMD uint32_t __stdcall NwSelectGridRecordBase(uint32_t index)
 {
-    uint8_t *pBase = (uint8_t *)(uintptr_t)g_dwGridCtxRecordBase;
+    uint8_t *pBase = (uint8_t *)(uintptr_t)nw_guest_to_host(g_dwGridCtxRecordBase);
     g_state_417388 = *(int32_t *)(pBase + ((uint32_t)index * 16u));
     return 1u;
 }
@@ -206,8 +209,9 @@ NW_SAVE_CMD uint32_t __stdcall NwResetAndRunCommand(uint32_t commandLine)
     return (uint32_t)(int32_t)result;
 }
 
-NW_SAVE_CMD uint32_t __stdcall NwInputFieldContainsArg(const char *arg)
+NW_SAVE_CMD uint32_t __stdcall NwInputFieldContainsArg(uint32_t argGuest)
 {
+    const char *arg = (const char *)(uintptr_t)nw_guest_to_host(argGuest);
     const char *pField = (const char *)(intptr_t)(nw_data_window + 0x1ca4);
 
     if (FindFirstSubstringInString(pField, arg) != 0) {

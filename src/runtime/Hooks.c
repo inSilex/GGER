@@ -236,8 +236,8 @@ NW_DIAG void DispatchExceptionOnGlobalScopeRecord(void)
 /* 0x63d0 holds the low 32-bit address of a table of 32-bit stream offsets;
  * the producer stores each entry as a dword (see AppLifecycle.c case 0x05). */
 #define g_apProbeDispatchTable \
-    ((const uint32_t *)(uintptr_t) \
-     (*(const uint32_t *)(const void *)(nw_data_window + 0x63d0)))
+    ((const uint32_t *)(uintptr_t)nw_guest_to_host( \
+     *(const uint32_t *)(const void *)(nw_data_window + 0x63d0)))
 
 extern uint8_t __stdcall RetryLockedProbeDispatch(uintptr_t entry)
     __asm__("_RetryLockedProbeDispatch");

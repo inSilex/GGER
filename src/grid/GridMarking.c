@@ -323,27 +323,29 @@ typedef struct {
 extern int32_t       g_dwScaleX;           
 extern int32_t       g_dwScaleY;           
 
-extern int32_t       g_pSlotsTop;          
+extern uintptr_t     g_pSlotsTop;          /* native pointer side-table slot */
 
 void __stdcall ComputeScaledGridOffset(GridPositionRec *) __asm__("_ComputeScaledGridOffset");
 void __stdcall ComputeScaledGridOffset(GridPositionRec *pRec)
 {
     const GridRefRec *pRef =
-        (const GridRefRec *)(uintptr_t)pRec->pRefRecord;
+        (const GridRefRec *)(uintptr_t)nw_guest_to_host(pRec->pRefRecord);
     const int16_t    *piSrc =
-        (const int16_t *)(uintptr_t)pRef->pSourceWords;
+        (const int16_t *)(uintptr_t)nw_guest_to_host(pRef->pSourceWords);
     uint32_t          uAccX, uAccY;                                     /* ESP-relative slots 0x14/0x18 */
     int32_t           sSubX, sSubY;
 
     uAccX = (uint32_t)pRec->bGridX * (uint32_t)g_dwScaleX;             
     uAccY = (uint32_t)pRec->bGridY * (uint32_t)g_dwScaleY;             
 
-    /* Anchor blend: only when wAnchorIndex is not FFFF and the entry's byte0 has bit2 set. */
-    /* Anchor base arithmetic is done in 32-bit (PE pointer width) then widened; doing it in a
-     * 64-bit -Wint-to-pointer-cast context would warn under mingw-w64 for a 32-bit target. */
+    /* Anchor blend: only when wAnchorIndex is not FFFF and the entry's byte0 has bit2 set.
+     * The slot chain is indexed downward from a native host pointer, so the
+     * anchor arithmetic must stay pointer-width. */
     if ((pRec->wAnchorIndex != 0xFFFFu) &&
-        ((*(const uint8_t *)(intptr_t)(g_pSlotsTop - (int32_t)(pRec->wAnchorIndex << 4))) & 4u) != 0u) {
-        const uint8_t *pbEntry = (const uint8_t *)(intptr_t)(g_pSlotsTop - (int32_t)(pRec->wAnchorIndex << 4)); /* base - idx*16 */
+        ((*(const uint8_t *)(uintptr_t)(g_pSlotsTop -
+                                       (uintptr_t)(pRec->wAnchorIndex << 4))) & 4u) != 0u) {
+        const uint8_t *pbEntry = (const uint8_t *)(uintptr_t)(g_pSlotsTop -
+                                (uintptr_t)(pRec->wAnchorIndex << 4)); /* base - idx*16 */
         int32_t sDx = (int32_t)(pbEntry[6] - pRec->bGridX);            
         int32_t sDy = (int32_t)(pbEntry[7] - pRec->bGridY);
         uint32_t ubLevelPlus1 = (uint32_t)pRec->bLerpLevel + 1u;       

@@ -65,10 +65,12 @@ void __stdcall CopyTextRowsForwardSkipNulToDisplayBuffer(
              + ((g_ScreenRows - 1 - nDstFirstRow) * g_ScreenPitch)
              + nDstFirstCol);
 
-    pSrc = (unsigned char *)(intptr_t)((intptr_t)nSrcBase
-             + (intptr_t)nSrcFirstCol
-             + (intptr_t)(1 - nNegSrcFirstRow) * (intptr_t)nSrcStride
-             - 1);
+    pSrc = (unsigned char *)nw_guest_to_host(
+             (uint32_t)((intptr_t)(uint32_t)nSrcBase
+                        + (intptr_t)nSrcFirstCol
+                        + (intptr_t)(1 - nNegSrcFirstRow) *
+                              (intptr_t)nSrcStride
+                        - 1));
 
     do {
         nBudget = g_ScratchBudget;
@@ -136,9 +138,12 @@ void __stdcall CopyTextRowsReverseSkipNulToDisplayBuffer(
              + ((g_ScreenRows - 1 - nDstFirstRow) * g_ScreenPitch)
              + nDstFirstCol);
 
-    pSrc = (unsigned char *)(intptr_t)(
-             (((nSrcRowLimit - 1 + nSrcFirstRow) * nSrcStride) + nSrcStride - 1)
-             + nSrcFirstCol + nSrcBase);
+    pSrc = (unsigned char *)nw_guest_to_host(
+             (uint32_t)((intptr_t)(nSrcRowLimit - 1 + nSrcFirstRow) *
+                              (intptr_t)nSrcStride
+                        + (intptr_t)nSrcStride - 1
+                        + (intptr_t)nSrcFirstCol
+                        + (intptr_t)(uint32_t)nSrcBase));
 
     do {
         nBudget = g_ScratchBudget;
@@ -203,8 +208,11 @@ void __stdcall CopyTextRowsToDisplayBuffer(int nDstRowLimit, int nDstColLimit,
           + ((g_ScreenRows - 1 - nDstFirstRow) * g_ScreenPitch)
           + nDstFirstCol;
 
-    pcSrc = (char *)(intptr_t)(((nSrcRowLimit - 1 + nSrcFirstRow) * nSrcStride)
-                      + nSrcBase - nSrcFirstCol);
+    pcSrc = (char *)nw_guest_to_host(
+                (uint32_t)((intptr_t)(nSrcRowLimit - 1 + nSrcFirstRow) *
+                                  (intptr_t)nSrcStride
+                           + (intptr_t)(uint32_t)nSrcBase
+                           - (intptr_t)nSrcFirstCol));
 
     while (nRows > 0) {
         nBudget = g_ScratchBudget;
@@ -279,8 +287,11 @@ void __stdcall CopyTextRowsUnrolledSkipNulToDisplayBuffer(
                                 + ((g_ScreenRows - 1 - nDstFirstRow) * g_ScreenPitch)
                                 + nDstFirstCol);
 
-    pcSrc = (char *)(intptr_t)((-(nSrcFirstRow) * nSrcStride)
-                               - nSrcFirstCol + nSrcBase);
+    pcSrc = (char *)nw_guest_to_host(
+                (uint32_t)((intptr_t)(-(nSrcFirstRow)) *
+                                  (intptr_t)nSrcStride
+                           - (intptr_t)nSrcFirstCol
+                           + (intptr_t)(uint32_t)nSrcBase));
 
     while (nRows > 0) {
         nBudget = g_ScratchBudget;

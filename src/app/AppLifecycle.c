@@ -435,7 +435,7 @@ NW_DIAG uint32_t __stdcall DispatchPendingCommandLoop(uint32_t arg)
 
             ReadTaggedRecordDeltaCountAndLatchStreamPosition(&local20);
             if (esi_state == 0x14u) {
-                uint32_t *slot_table = (uint32_t *)(uintptr_t)NW32(0x63d0);
+                uint32_t *slot_table = (uint32_t *)(uintptr_t)nw_guest_to_host(NW32(0x63d0));
                 slot_table[local10] = (uint32_t)local20;
             }
             continue;
@@ -520,7 +520,7 @@ NW_DIAG uint32_t __stdcall DispatchPendingCommandLoop(uint32_t arg)
                     NW8(0x16e4) = 0u;
                     if (NW32(0x16ec) != 0u) {
                         NW_WINDOW_PTR_REF(uint8_t, 0x16f0) =
-                            (uint8_t *)(uintptr_t)G_VM_RECORD_ADDR;
+                            (uint8_t *)(uintptr_t)nw_guest_to_host(G_VM_RECORD_ADDR);
                         (void)AllocateHeapCursorBlock(NW32(0x16ec));
                     }
                     SeedRandomFromClockAndClearWorkQueue();
@@ -563,8 +563,8 @@ run_opcode:
             uint32_t block = G_VM_RECORD_ADDR;
             uint32_t current_block;
 
-            G_VM_SAVED_PTR = (uint8_t *)(uintptr_t)block;
-            (void)ReadLzssOrRawTaggedRecordBlock((uint8_t *)(uintptr_t)block);
+            G_VM_SAVED_PTR = (uint8_t *)(uintptr_t)nw_guest_to_host(block);
+            (void)ReadLzssOrRawTaggedRecordBlock((uint8_t *)(uintptr_t)nw_guest_to_host(block));
 
             current_block = G_VM_RECORD_ADDR;
             if (!ExecuteOpcodeAndStoreOperand(current_block, local1c, local18,
@@ -585,18 +585,18 @@ run_opcode:
                         NW32(0x16ec) = ecx;
 
                     {
-                        uint32_t *record = (uint32_t *)(uintptr_t)G_VM_RECORD_ADDR;
+                        uint32_t *record = (uint32_t *)(uintptr_t)nw_guest_to_host(G_VM_RECORD_ADDR);
                         record[1] = 0x4469736bu;           /* "Disk" */
                     }
                     {
                         uint32_t length = (uint32_t)GetStreamLogicalBytePosition();
                         length -= ebx;
                         length--;
-                        ((uint32_t *)(uintptr_t)G_VM_RECORD_ADDR)[2] = length;
+                        ((uint32_t *)(uintptr_t)nw_guest_to_host(G_VM_RECORD_ADDR))[2] = length;
                     }
                     {
                         uint32_t trailing = NW32(0x16cc);
-                        ((uint32_t *)(uintptr_t)G_VM_RECORD_ADDR)[3] = trailing;
+                        ((uint32_t *)(uintptr_t)nw_guest_to_host(G_VM_RECORD_ADDR))[3] = trailing;
                     }
                     NW32(0x16c8) = 0x10u;                 
                 }
@@ -607,8 +607,8 @@ run_opcode:
                 continue;
             }
 
-            G_VM_RECORD_PTR = (uint8_t *)(uintptr_t)
-                AllocateHeapCursorBlock(NW32(0x16c8));
+            G_VM_RECORD_PTR = (uint8_t *)(uintptr_t)nw_guest_to_host(
+                AllocateHeapCursorBlock(NW32(0x16c8)));
             continue;
         }
     }
@@ -1138,7 +1138,7 @@ InitializeAppSubsystemsFromSavedPath(const char *pszPath)
 NW_DIAG uint32_t __stdcall
 InitializeAppSubsystemsFromSavedPath(const char *pszPath)
 {
-    uint32_t dwIntervalSource;
+    uintptr_t pIntervalSource;
 #if defined(NW_PLATFORM_SDL)
     const char *pszDataPath;
     char szExternalOverlay[MAX_PATH];
@@ -1212,9 +1212,12 @@ InitializeAppSubsystemsFromSavedPath(const char *pszPath)
     }
     NW_NATIVE_BOOT("app_movie_ok");
 
-    dwIntervalSource = (uint32_t)NW_WINDOW_PTR_VALUE(0x6378u);
+    /* Slot 0x6378 is a native host pointer (g_pVmFrameCtlRecord): keep it
+     * pointer-width.  Truncating to 32 bits dereferenced a guest offset such
+     * as 0x8880c instead of the mapped host address. */
+    pIntervalSource = NW_WINDOW_PTR_VALUE(0x6378u);
     if ((uint8_t)SetFrameIntervalFromDivisor(
-            *(const uint8_t *)((uintptr_t)dwIntervalSource + 1u)) == 0u) {
+            *(const uint8_t *)(pIntervalSource + 1u)) == 0u) {
         NW_NATIVE_BOOT("app_interval_fail");
         return 0u;
     }
@@ -1641,7 +1644,8 @@ record_ready:
     /* Optional mask table: bit rec[1]&7 in byte rec[1]>>3 must be set. */
     if (nw_load32(nw_data_window + NW_MASK_TABLE) != 0u) {
         const uint8_t *mask_table =
-            (const uint8_t *)(uintptr_t)nw_load32(nw_data_window + NW_MASK_TABLE);
+            (const uint8_t *)(uintptr_t)nw_guest_to_host(
+                nw_load32(nw_data_window + NW_MASK_TABLE));
         uint32_t index = nw_load8(record + 1);
         uint32_t mask  = 1u << (index & 7u);
 
@@ -1664,7 +1668,7 @@ record_ready:
         child_address = chain_top - (span_current << 4);
 
         if (AdvanceGridCellSubSpan((uint8_t)(span_current != span_next), 1u,
-                                   (void *)(uintptr_t)child_address) == 0u) {
+                                   (void *)(uintptr_t)nw_guest_to_host(child_address)) == 0u) {
             if ((uint32_t)(uintptr_t)record ==
                 nw_load_ptr32(NW_DEFERRED_RECORD)) {
                 goto epilogue;
@@ -1676,7 +1680,7 @@ record_ready:
         span_next = nw_load16(record + 0x08);
         if (span_next != 0xffffu) {
             chain_top = nw_load_ptr32(NW_STACK_TOP);
-            child = (uint8_t *)(uintptr_t)(chain_top - (span_next << 4));
+            child = (uint8_t *)(uintptr_t)nw_guest_to_host(chain_top - (span_next << 4));
             nw_store8(child, (uint8_t)(nw_load8(child) | 0x80u));
             nw_store8(child + 4, nw_load8(record + 6));
             nw_store8(child + 5, nw_load8(record + 7));
@@ -1697,12 +1701,12 @@ record_ready:
         child_address = chain_top - (span_next << 4);
 
         if (AdvanceGridCellSubSpan(1u, 0u,
-                                   (void *)(uintptr_t)child_address) != 0u) {
+                                   (void *)(uintptr_t)nw_guest_to_host(child_address)) != 0u) {
             nw_store16(record + 0x0a, nw_load16(record + 0x08));
             span_next = nw_load16(record + 0x08);
             if (span_next != 0xffffu) {
                 chain_top = nw_load_ptr32(NW_STACK_TOP);
-                child = (uint8_t *)(uintptr_t)(chain_top - (span_next << 4));
+                child = (uint8_t *)(uintptr_t)nw_guest_to_host(chain_top - (span_next << 4));
                 nw_store8(child, (uint8_t)(nw_load8(child) | 0x80u));
                 nw_store8(child + 4, nw_load8(record + 6));
                 nw_store8(child + 5, nw_load8(record + 7));
@@ -1737,15 +1741,16 @@ after_span:
 
     state_record_address = ((uint32_t)nw_load8(record + 1) << 4) +
                            nw_load_ptr32(NW_STATE_TABLE);
-    nw_store_ptr(NW_CURRENT_STATE, (void *)(uintptr_t)state_record_address);
+    nw_store_ptr(NW_CURRENT_STATE, (void *)(uintptr_t)nw_guest_to_host(state_record_address));
 
     if ((nw_load8(record) & 0x08u) != 0u) {
-        nw_store_ptr(NW_VM_BASE_B, (void *)(uintptr_t)nw_load32(record + 0x0c));
+        nw_store_ptr(NW_VM_BASE_B, (void *)(uintptr_t)nw_guest_to_host(nw_load32(record + 0x0c)));
     } else {
         nw_store_ptr(NW_VM_BASE_B, record + 0x0c);
     }
 
-    child_list = nw_load32((const void *)((const unsigned char *)(uintptr_t)state_record_address + 8));
+    child_list = nw_load32((const void *)((const unsigned char *)(uintptr_t)
+                                          nw_guest_to_host(state_record_address) + 8));
     nw_store8(nw_data_window + NW_REACHED_CELL, 0u);
     if (child_list == 0u) {
         goto next_record;
@@ -1754,7 +1759,7 @@ after_span:
 child_outer:
     /* The mode is re-read from the current context on every child record. */
     mode = nw_load8((const void *)(uintptr_t)
-                    nw_load_ptr32(NW_CURRENT_CONTEXT));
+                    nw_guest_to_host(nw_load_ptr32(NW_CURRENT_CONTEXT)));
     mode &= 0xf0u;
     nw_store8(nw_data_window + NW_CELL_MODE, (uint8_t)mode);
 
@@ -1773,7 +1778,8 @@ child_outer:
 child_bit:
     /* State record byte 1 selects which child bits are live. */
     state_record_address = nw_load_ptr32(NW_CURRENT_STATE);
-    if ((nw_load8((const void *)((const unsigned char *)(uintptr_t)state_record_address + 1)) &
+    if ((nw_load8((const void *)((const unsigned char *)(uintptr_t)
+                                 nw_guest_to_host(state_record_address) + 1)) &
          (1u << bit_index)) == 0u) {
         goto next_bit;
     }
@@ -1791,7 +1797,7 @@ child_bit:
     nw_store8(nw_data_window + NW_OPCODE_FLAG, 0u);
 
     status = ExecuteOpcodeStream(0u,
-                                nw_load32((const void *)(uintptr_t)child_list));
+                                nw_load32((const void *)(uintptr_t)nw_guest_to_host(child_list)));
     if (status == 0) {
         goto next_bit;
     }
@@ -1817,7 +1823,8 @@ next_bit:
     }
 
 child_list_check:
-    child = (uint8_t *)(uintptr_t)nw_load32((const void *)(uintptr_t)child_list);
+    child = (uint8_t *)(uintptr_t)nw_guest_to_host(
+        nw_load32((const void *)(uintptr_t)nw_guest_to_host(child_list)));
     if ((nw_load8(child) & 0x80u) == 0u) {
         child_list += 4u;
         goto child_outer;
@@ -1874,11 +1881,12 @@ typedef unsigned char  u8;
 typedef unsigned char *u8p;
 
 /*
- * The five slot fields are addresses in the recovered 32-bit guest address
- * space, not native host pointers.  Keep them 32 bits wide on every host so
- * the record offsets stay exactly as the original window defines them.  The
- * pointers currently come from the low-address host heap; a future guest
- * arena will make the conversion explicit on all architectures.
+ * The five slot fields used to live at +0x14, +0x1C, +0x24, +0x2C and +0x34
+ * below the slot record base.  They are the stream scratch buffers and are
+ * pointer slots, so on a 64-bit host the live values are in the native
+ * pointer side table; the raw 32-bit fields only keep the original guest
+ * addresses.  Free through NW_WINDOW_PTR_VALUE so a guest-window build hands
+ * the heap real host pointers.
  */
 typedef struct GlobalSlotRecord {
     u8      pad00[0x14];   /* +0x00 .. +0x13 */
@@ -1912,21 +1920,25 @@ void RebuildGridPaletteAndResetExtent(void);
 
 int ResetSubsystemsAndFreeGlobalSlots(void)
 {
+    NW_NATIVE_BOOT("reset_begin");
     if (g_pRecord->fClearAllSlots != 0u) {
         ClearAllSlotEntries();
     }
 
     ResetPendingSlotHookState();
     DispatchMciAudioReset();
+    NW_NATIVE_BOOT("reset_free_slots");
 
-    FreeHeapBlockIfNotNull((u8p)(uintptr_t)g_pRecord->pSlot0);
-    FreeHeapBlockIfNotNull((u8p)(uintptr_t)g_pRecord->pSlot1);
-    FreeHeapBlockIfNotNull((u8p)(uintptr_t)g_pRecord->pSlot2);
-    FreeHeapBlockIfNotNull((u8p)(uintptr_t)g_pRecord->pSlot3);
-    FreeHeapBlockIfNotNull((u8p)(uintptr_t)g_pRecord->pSlot4);
+    FreeHeapBlockIfNotNull((u8p)(uintptr_t)NW_WINDOW_PTR_VALUE(0x1714));
+    FreeHeapBlockIfNotNull((u8p)(uintptr_t)NW_WINDOW_PTR_VALUE(0x171c));
+    FreeHeapBlockIfNotNull((u8p)(uintptr_t)NW_WINDOW_PTR_VALUE(0x1724));
+    FreeHeapBlockIfNotNull((u8p)(uintptr_t)NW_WINDOW_PTR_VALUE(0x172c));
+    FreeHeapBlockIfNotNull((u8p)(uintptr_t)NW_WINDOW_PTR_VALUE(0x1734));
 
+    NW_NATIVE_BOOT("reset_palette");
     RebuildGridPaletteAndResetExtent();
 
+    NW_NATIVE_BOOT("reset_done");
     return 1;  /* machine writes AL only; upper EAX bytes are callee residue */
 }
 #endif /* NW_UNIT_ResetSubsystemsAndFreeGlobalSlots */

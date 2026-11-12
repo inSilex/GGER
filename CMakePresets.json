@@ -91,6 +91,43 @@
       }
     },
     {
+      "name": "ios",
+      "displayName": "GGER iOS arm64 (release)",
+      "description": "Unsigned arm64 .app/.ipa cross-built in Docker. Set NW_IOS_SDK to an iPhoneOS.sdk, Xcode.app, or .xip.",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/ios",
+      "toolchainFile": "${sourceDir}/cmake/toolchain-ios.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "NW_IOS_MIN": "13.0",
+        "NW_IOS_BUNDLE_ID": "com.gamos.netwalk",
+        "NW_IOS_RENDER_SCALE": "1",
+        "NW_IOS_SIGN_MODE": "none",
+        "NW_IOS_BUILD_GAME": "OFF"
+      }
+    },
+    {
+      "name": "ios-debug",
+      "displayName": "GGER iOS arm64 (debug)",
+      "description": "Unoptimized iOS build with developer diagnostics enabled.",
+      "inherits": "ios",
+      "binaryDir": "${sourceDir}/build/ios-debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "NW_DEBUG_TOOLS": "ON"
+      }
+    },
+    {
+      "name": "ios-game",
+      "displayName": "GGER iOS NetWalk game",
+      "description": "The full NetWalk game as an unsigned arm64 .app/.ipa, with the overlay and SoundFont staged beside the executable.",
+      "inherits": "ios",
+      "binaryDir": "${sourceDir}/build/ios-game",
+      "cacheVariables": {
+        "NW_IOS_BUILD_GAME": "ON"
+      }
+    },
+    {
       "name": "ps5-native-debug",
       "displayName": "GGER PS5 native title (debug)",
       "description": "Native PS5 title with developer diagnostics enabled.",
@@ -134,6 +171,18 @@
     {
       "name": "ps5-native-debug",
       "configurePreset": "ps5-native-debug"
+    },
+    {
+      "name": "ios",
+      "configurePreset": "ios"
+    },
+    {
+      "name": "ios-debug",
+      "configurePreset": "ios-debug"
+    },
+    {
+      "name": "ios-game",
+      "configurePreset": "ios-game"
     }
   ]
 }

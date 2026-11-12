@@ -274,15 +274,22 @@ launched with the same control set after the full-screen change. Passed:
 - `EXIT` ends the activity through the normal shutdown path.
 - `KEYBOARD` shows and hides the IME. While the IME is visible the activity
   resizes, the system bars stay hidden, the game viewport stays centered, and
-  all four controls remain reachable.
+  all four controls remain reachable. Tapping or clicking anywhere outside the
+  keyboard in the game window dismisses it, and the tap still reaches the game
+  or the control under it.
 - The soft keyboard's Enter key remains visible, does not dismiss the IME, and
   delivers the game's carriage-return input action.
-- Landscape at 1920x1080 places `EXIT`/`KEYBOARD` in the left side bar and
-  `LOCK`/`L CLICK` in the right side bar. Reverse landscape mirrors the same
-  grouping.
-- Portrait places the four controls in a single row below the centered game
-  viewport. Hot rotation between portrait and landscape keeps the controls
-  usable and the game view centered.
+- A portrait window shows one wide row of four buttons in the bottom black
+  bar (or the top bar when the bottom is unusable), outside the game view.
+  A wide landscape window shows two stacked buttons in each side bar:
+  `EXIT`/`KEYBOARD` left and `LOCK`/`L CLICK` right. Both bar layouts leave the
+  game view completely uncovered.
+- Only on a near-4:3 window, where no bar can hold the controls, does the card
+  appear: only a small top tab is visible during play, and tapping it slides
+  down a wide four-button row across 70% of the display. Tapping outside the
+  card or waiting about four seconds closes it.
+- Hot rotation between portrait and landscape switches between the bar and
+  card layouts and keeps the game view centered.
 - `LOCK` pins the current orientation and changes to `UNLOCK` with the open
   padlock; tapping `UNLOCK` resumes following the device sensors. The lock
   state and exact orientation survived force-stop/relaunch in reverse landscape
@@ -319,6 +326,108 @@ Additional checks:
 - Check safe-area/cutout placement on a real device.
 - Check high-resolution overlay assets.
 - Check real-device performance and thermals.
+
+## iOS checks
+
+The iOS artifact is optional and built only inside the Docker image with a
+user-supplied Apple SDK. It needs an overlay:
+
+```sh
+docker/build-releases.sh --ios --ios-sdk /path/to/Xcode.xip \
+    --overlay /path/to/overlay.nw
+```
+
+The release directory contains only the IPA, so unpack it for the static
+checks (run inside the image or with LLVM 20 tools):
+
+```sh
+tmp=$(mktemp -d)
+unzip -q dist/docker-releases/ios/NetWalk.ipa -d "$tmp"
+app="$tmp/Payload/NetWalk.app"
+llvm-objdump --macho --private-headers "$app/NetWalk" |
+    grep -E 'LC_BUILD_VERSION|platform 2|minos 13.0|__PAGEZERO|LC_CODE_SIGNATURE'
+unzip -l dist/docker-releases/ios/NetWalk.ipa |
+    grep -E 'Payload/NetWalk.app/(NetWalk|Info.plist|overlay.nw|gm.sf2|AppIcon)'
+python3 - "$app/Info.plist" <<'PY'
+import plistlib, sys
+p = plistlib.load(open(sys.argv[1], "rb"))
+assert p["CFBundleIdentifier"] == "com.gamos.netwalk"
+assert p["MinimumOSVersion"] == "13.0"
+assert p["UIRequiresFullScreen"] is True
+assert p["UIFileSharingEnabled"] is True
+assert p["LSSupportsOpeningDocumentsInPlace"] is True
+assert "UIInterfaceOrientationPortrait" in p["UISupportedInterfaceOrientations~ipad"]
+PY
+```
+
+The game executable must report an arm64 Mach-O, `platform ios`, `minos 13.0`,
+the linker-default `__PAGEZERO` of `0x100000000`, and (when signing is
+enabled) an `LC_CODE_SIGNATURE` load command. The bundle must contain the
+executable, `Info.plist`, `overlay.nw`, `gm.sf2`, and the generated icons.
+`llvm-objdump --macho --private-headers` also shows `__TEXT` at
+`0x100000000`; that is what makes `nw_guest_base` non-zero and puts the game
+in the 64-bit guest window described in
+[PORTABLE_64BIT.md](PORTABLE_64BIT.md).
+
+Device runtime checks:
+
+- The game reaches the title and menu with overlay assets visible, in both
+  portrait and landscape. The fixed 4:3 image is letterboxed, never stretched
+  or cropped, and the bars are symmetric. `main()` no longer overrides
+  `SDL_HINT_ORIENTATIONS`: the launch orientation comes from the bundle's
+  `Info.plist` (`UIRequiresFullScreen` is set), so SDL's window frame and the
+  UIKit view agree.
+- The game writes no run log or crash file. Errors from the iOS entry point
+  such as a missing bundled resource still go through `SDL_Log` to the unified
+  log, but the engine has no per-stage trace and no fatal-signal reporter.
+  Use Xcode's debugger or the system crash report when a device fault needs
+  investigation.
+- The Windows high proxy runs at render scale 4 and uses the scaled sprite
+  blitter. The iOS build ships at scale 1, which reaches the row-copy
+  functions instead; exercise that path with `NW_RENDER_SCALE=1` when
+  validating the proxy.
+- The same four virtual controls as Android are drawn directly in the
+  letterbox bars when they fit there, and on the pull-down card otherwise:
+  `EXIT`, `KEYBOARD`, `LOCK`/`UNLOCK`, and `L CLICK`/`R CLICK`.
+  - `EXIT` leaves the game through the normal shutdown path.
+  - `KEYBOARD` shows and hides the iOS software keyboard. It stays hidden at
+    launch; tapping a text field's on-screen control is what opens it. Tapping
+    anywhere outside the keyboard in the game window dismisses it, and the tap
+    still reaches the game or the control under it.
+  - `LOCK` pins the current orientation; the label becomes `UNLOCK` and the
+    padlock opens. `UNLOCK` restores all orientations from `Info.plist`.
+    Rotation between portrait and either landscape direction still works
+    while unlocked. While locked, rotating the device by 180 degrees must not
+    change the presentation.
+  - In portrait, the buttons sit in the bottom black bar as one wide row; in
+    wide landscape they split into two columns in the side bars. The game view
+    stays fully visible in both bar layouts. On a near-4:3 window the controls
+    move to the pull-down card: only a small top tab is visible while closed,
+    tapping it slides down a row of wide buttons across 70% of the screen, and
+    tapping outside the card or waiting about four seconds closes it.
+  - The buttons are wide rectangles with readable labels, not a full-width
+    toolbar.
+  - `L CLICK` starts in left-click mode. Tapping it switches viewport taps to
+    right clicks and changes the label to `R CLICK`; tapping again returns to
+    left-click mode. A physical mouse or pen keeps its own buttons.
+- A tap rotates a tile through SDL's touch-to-mouse bridge, delivered as the
+  selected click mode. Touches on a virtual control are consumed before the
+  game sees them.
+- `EXIT` leaves the game through the normal shutdown path. A first launch
+  creates `NETWALK0.282` in `SDL_GetPrefPath("Gamos", "NetWalk")`; relaunching
+  preserves high scores.
+- Audio is audible and the launcher icon has a transparent background.
+
+Ad-hoc signing should leave `_CodeSignature/CodeResources` in the bundle and
+`LC_CODE_SIGNATURE` in the executable. For an Apple signature, pass a
+development `.p12` and a `.mobileprovision`; the build derives the entitlements
+from the profile with `tools/mobileprovision.py` and embeds
+`embedded.mobileprovision`. Install the resulting IPA on a device to validate
+the signature and runtime behavior.
+
+As of 2026-11-12 the Docker toolchain, the full game, and ad-hoc signing have
+built and passed the static checks above. Device launch and runtime validation
+remain pending because no Apple signing identity/device was available.
 
 ## PS5 checks
 

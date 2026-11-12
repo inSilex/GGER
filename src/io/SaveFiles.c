@@ -348,7 +348,7 @@ NW_DIAG int __stdcall InitializeDispatchRecords(uint32_t nVariantNumber)
 
         dwDescriptorAddress = g_dwRecordArrayBase +
                               (dwRecordIndex << 4);
-        pRecord = (NwSaveRecord *)(uintptr_t)dwDescriptorAddress;
+        pRecord = (NwSaveRecord *)(uintptr_t)nw_guest_to_host(dwDescriptorAddress);
 
         (void)ReadStreamChunkFromDescriptorVerifyCount(
             4u, (char *)&dwSlotCount);
@@ -697,21 +697,21 @@ NW_DIAG uint32_t __stdcall LoadRecordBlocksIntoTileCache(uint8_t flagA,
 
     g_dwLastRecordIndex = recordIndex;
     dwDescAddr = g_pRecordArrayBase + (recordIndex << 4);
-    pDesc = (NwRecordDescriptor *)(uintptr_t)dwDescAddr;
+    pDesc = (NwRecordDescriptor *)(uintptr_t)nw_guest_to_host(dwDescAddr);
 
     if ((uint8_t)SeekStreamLogicalOffset(
             0u, (LONG)pDesc->dwStreamOffset) == 0u)
         return 0u;
 
     if ((uint8_t)ReadLzssOrRawTaggedRecordBlock(
-            (BYTE *)(uintptr_t)pDesc->pReadDest) == 0u)
+            (BYTE *)(uintptr_t)nw_guest_to_host(pDesc->pReadDest)) == 0u)
         return 0u;
 
     dwSrcOffset = 0u;
     for (dwRow = 0u; (int32_t)dwRow < (int32_t)g_dwRecordRowLimit; ++dwRow) {
         uintptr_t pDst = (uintptr_t)g_pBulkCopyBase +
             (((uint32_t)dwRow << (g_dwBulkCopyShift & 31u)) * 2u);
-        uintptr_t pSrc = (uintptr_t)(pDesc->pArena +
+        uintptr_t pSrc = (uintptr_t)nw_guest_to_host(pDesc->pArena +
             (dwSrcOffset * g_dwRecordStride));
 
         MoveMemoryRegion((void *)pDst, (const void *)pSrc,
@@ -724,12 +724,12 @@ NW_DIAG uint32_t __stdcall LoadRecordBlocksIntoTileCache(uint8_t flagA,
     for (dwSlot = 0u; dwSlot < dwSlotCount; ++dwSlot) {
         uint8_t *pSlot = AcquireNextFreeSlot();
 
-        memcpy(pSlot, (const void *)(uintptr_t)dwSrcOffset, 16u);
+        memcpy(pSlot, (const void *)(uintptr_t)nw_guest_to_host(dwSrcOffset), 16u);
         dwSrcOffset += 16u;
     }
 
     pDesc->dwSlotCount = 0u;
-    FreeHeapBlock((uint8_t *)(uintptr_t)pDesc->pArena);
+    FreeHeapBlock((uint8_t *)(uintptr_t)nw_guest_to_host(pDesc->pArena));
     FlushPendingSurfaceRectsAndReseedRandom(0);
 
     if (flagA == 0u) {
@@ -946,7 +946,7 @@ NW_DIAG int __stdcall WriteSaveFileBuffersAndLoadTileCache(
     dwRecordOffset = 0u;
     for (iRecord = 0u; iRecord < g_dwRecordCountLimit; ++iRecord) {
         NwSaveRecord *pRecord = (NwSaveRecord *)(uintptr_t)
-            (g_dwRecordArrayBase + dwRecordOffset);
+            nw_guest_to_host(g_dwRecordArrayBase + dwRecordOffset);
         uint32_t dwSlotCount;
         uint32_t dwSlotRegionBytes;
         uint8_t *pSlots;
@@ -955,7 +955,7 @@ NW_DIAG int __stdcall WriteSaveFileBuffersAndLoadTileCache(
             dwSlotCount = pRecord->dwSlotCount;
             dwSlotRegionBytes = g_dwSlotRegionBase * 2u;
             pSlots = (uint8_t *)(uintptr_t)
-                (pRecord->pArena + dwSlotRegionBytes);
+                nw_guest_to_host(pRecord->pArena + dwSlotRegionBytes);
 
             WriteStreamChunkFromStackArgumentDword(iRecord);
             WriteStreamChunkFromStackArgumentDword(dwSlotCount);
@@ -965,7 +965,7 @@ NW_DIAG int __stdcall WriteSaveFileBuffersAndLoadTileCache(
 
             (void)WriteStreamChunkCheckComplete(
                 dwSlotRegionBytes + dwSlotCount * 16u,
-                (char *)(uintptr_t)pRecord->pArena);
+                (char *)(uintptr_t)nw_guest_to_host(pRecord->pArena));
 
             ApplyDeltaToUnmarkedEntries((int32_t)g_dwSlotPointerDelta,
                                         (int32_t)dwSlotCount, pSlots);
@@ -980,7 +980,7 @@ NW_DIAG int __stdcall WriteSaveFileBuffersAndLoadTileCache(
                         *(uint32_t *)(void *)(pSlots + 0x0c);
 
                     (void)WriteStreamChunkCheckComplete(
-                        cbPayload, (char *)(uintptr_t)pPayload);
+                        cbPayload, (char *)(uintptr_t)nw_guest_to_host(pPayload));
                 }
 
                 pSlots += 16u;
