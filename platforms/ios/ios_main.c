@@ -24,6 +24,10 @@ extern void NwLinuxSetArgs(int argc, char **argv);
 extern void NwLinuxSetModulePath(const char *pszPosixPath);
 extern int InitializeAndRunWinMain(void);
 
+#if defined(NW_PORTABLE_IOS)
+extern void NwSdlIosApplySavedRotationLock(void);
+#endif
+
 #define NW_IOS_COPY_BUFFER (64 * 1024)
 
 static int NwIosCopyFile(const char *pszSource, const char *pszDest)
@@ -129,6 +133,13 @@ int main(int argc, char **argv)
      * desktop input code already understands. */
     (void)SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "1");
     (void)SDL_SetHint(SDL_HINT_RETURN_KEY_HIDES_IME, "0");
+
+#if defined(NW_PORTABLE_IOS)
+    /* Reapply a remembered rotation lock before the first window exists, so
+     * UIKit starts in the saved orientation rather than the direction the
+     * device happens to be held in. */
+    NwSdlIosApplySavedRotationLock();
+#endif
 
     pszBase = SDL_GetBasePath();
     if (pszBase == NULL) {

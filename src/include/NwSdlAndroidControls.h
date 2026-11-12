@@ -14,7 +14,7 @@
  * startup.  The rotation-lock choice is remembered across launches: Android
  * keeps it in its activity preferences, and iOS keeps it in a separate
  * rotation.cfg file in the writable preference directory (not in the game
- * save).
+ * save) and reapplies the pinned orientation before the first window.
  */
 
 #ifndef NW_SDL_ANDROID_CONTROLS_H

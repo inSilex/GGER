@@ -179,6 +179,7 @@ if(NW_IOS_BUILD_GAME)
         "${NW_IOS_GAME_PORTABLE}/linux/linux_compat.c"
         "${NW_IOS_GAME_PORTABLE}/ios/ios_main.c"
         "${NW_ROOT}/platforms/ios/ios_memory.c"
+        "${NW_ROOT}/platforms/ios/ios_orientation.m"
     )
 
     add_executable(ios-game ${NW_IOS_UNIT_SOURCES})

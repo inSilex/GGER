@@ -112,11 +112,11 @@ which stays hidden at launch; tapping anywhere outside it in the game window
 dismisses it. The lock control pins the exact current display
 orientation by narrowing SDL's supported orientation set, including blocking a
 180-degree turn, and **UNLOCK** restores all of the orientations declared in
-`Info.plist`. The lock state is remembered: if the app is locked, the next
-launch starts locked and shows **UNLOCK**. Because UIKit chooses the launch
-orientation from the device before the game runs, the launch pins the live
-orientation again rather than forcing a rotation; holding the device as it was
-locked therefore restores the same orientation. The lock is stored in its own
+`Info.plist`. The lock state and the pinned orientation are remembered: if
+the app is locked, the next launch starts in that saved orientation and shows
+**UNLOCK**, even if the device is being held the other way. Unlocking applies
+the full orientation set immediately, so the app turns to the device's current
+orientation without waiting for another rotation. The lock is stored in its own
 `rotation.cfg` in the preference directory, separate from the game save, so
 starting a new game or resetting high scores never changes it. A physical
 gamepad and keyboard use the same SDL paths as the desktop build where iOS

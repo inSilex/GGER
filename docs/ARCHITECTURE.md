@@ -86,8 +86,12 @@ under `windows/`.
 
 - `platforms/ios/ios_main.c` is the SDL entry point. It resolves the read-only
   bundle and writable preference directory, stages `overlay.nw` and `gm.sf2`
-  into the latter, and points the Win32-compatible path layer at a synthetic
+  into the latter, restores a remembered rotation lock before the first window
+  exists, and points the Win32-compatible path layer at a synthetic
   `NETWALK.EXE` there.
+- `platforms/ios/ios_orientation.m` bridges the rotation lock to UIKit. It
+  requests the saved orientation while the window is still hidden and asks the
+  scene to follow the device again when the lock is released.
 - `platforms/ios/ios_memory.c` maps and protects the guest arena through Mach
   VM. With a non-zero `nw_guest_base` it allocates inside the 4 GiB-aligned
   guest window above 4 GiB; with a low link it keeps the sub-4 GiB path used

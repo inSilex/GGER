@@ -1237,11 +1237,11 @@ NW_SDL_CODE static const char *nw_ios_current_orientation_mask(void)
     }
 }
 
-/* Apply the stored lock once, after the window exists.  UIKit has already
- * chosen the launch orientation, so pinning the live orientation here picks
- * the same one and avoids the window-frame mismatch that an orientation hint
- * set before window creation caused.  When the device is still held the way it
- * was locked, the live orientation matches the stored one. */
+/* Fallback for entry points that did not apply the saved lock before window
+ * creation.  UIKit has already chosen the launch orientation, so pinning the
+ * live orientation here avoids the window-frame mismatch that an orientation
+ * hint set after sizing the window would cause.  The saved orientation is left
+ * untouched so the next launch can still try to restore it. */
 NW_SDL_CODE static void nw_ios_sync_rotation_locked(void)
 {
     char szSavedMask[32];
@@ -1262,10 +1262,37 @@ NW_SDL_CODE static void nw_ios_sync_rotation_locked(void)
     g_nwSdlIosRotationMask[sizeof(g_nwSdlIosRotationMask) - 1] = '\0';
     g_nwSdlAndroidRotationLocked = 1;
     g_nwSdlAndroidRotationLockedSynced = 1;
-    /* Keep the file truthful when the app launched in another orientation. */
-    if (strcmp(szSavedMask, pszCurrent) != 0)
+    /* Files written before the orientation was stored only have the flag.
+     * Fill in the orientation UIKit actually chose, without overwriting a
+     * real saved orientation. */
+    if (szSavedMask[0] == '\0')
         nw_ios_save_rotation_locked(1, pszCurrent);
 }
+
+/* Restore a remembered lock from the iOS entry point, before SDL creates the
+ * window.  Setting the hint this early lets UIKit launch directly in the saved
+ * orientation instead of first adopting the direction the device happens to be
+ * held in.  The later sync is then a no-op. */
+NW_SDL_CODE void NwSdlIosApplySavedRotationLock(void)
+{
+    char szMask[32];
+
+    if (!nw_ios_load_rotation_locked(szMask, sizeof(szMask)))
+        return;
+    if (szMask[0] == '\0')
+        return;
+    (void)SDL_SetHint(SDL_HINT_ORIENTATIONS, szMask);
+    strncpy(g_nwSdlIosRotationMask, szMask, sizeof(g_nwSdlIosRotationMask) - 1);
+    g_nwSdlIosRotationMask[sizeof(g_nwSdlIosRotationMask) - 1] = '\0';
+    g_nwSdlAndroidRotationLocked = 1;
+    g_nwSdlAndroidRotationLockedSynced = 1;
+}
+#endif
+
+#if defined(NW_PORTABLE_IOS)
+/* Implemented in platforms/ios/ios_orientation.m. */
+extern void NwIosRefreshInterfaceOrientation(void);
+extern void NwIosRequestOrientation(const char *pszMask);
 #endif
 
 NW_SDL_CODE int NwSdlAndroidToggleRotationLock(void)
@@ -1309,6 +1336,9 @@ NW_SDL_CODE int NwSdlAndroidToggleRotationLock(void)
         g_nwSdlAndroidRotationLocked = 0;
         g_nwSdlIosRotationMask[0] = '\0';
         nw_ios_save_rotation_locked(0, NULL);
+        /* The device may have been turned while the lock was on.  Ask UIKit
+         * to follow it now instead of waiting for another sensor event. */
+        NwIosRefreshInterfaceOrientation();
         return 0;
     }
     mask = nw_ios_current_orientation_mask();
@@ -1780,6 +1810,11 @@ NW_SDL_CODE void CreatePlayerMainWindow(void *pPlayerCfg)
      * Waiting for the first drawn frame would leave a short rotatable window
      * and could let the launch orientation change before the lock applies. */
     nw_ios_sync_rotation_locked();
+    /* If the saved lock was applied before window creation, make sure UIKit
+     * actually presents that orientation even when the device is currently
+     * held the other way.  This runs while the window is still hidden. */
+    if (g_nwSdlAndroidRotationLocked && g_nwSdlIosRotationMask[0] != '\0')
+        NwIosRequestOrientation(g_nwSdlIosRotationMask);
 #endif
 
 #if !defined(__ANDROID__)
