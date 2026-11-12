@@ -25,7 +25,7 @@ edge swipe reveals them temporarily.
 | `H` | Toggle high-resolution and original assets |
 | Touch pointer (Android, iOS) | Tap or drag inside the game viewport; delivered as the selected left or right click |
 | Click mode (Android, iOS) | Tap `L CLICK`/`R CLICK` to toggle whether touch input becomes a left or right click; left is the default |
-| Rotation lock (Android, iOS) | Tap `LOCK` to pin the current orientation; the label changes to `UNLOCK` to resume rotation. Android also remembers the lock state and pinned orientation for later launches |
+| Rotation lock (Android, iOS) | Tap `LOCK` to pin the current orientation; the label changes to `UNLOCK` to resume rotation. Both platforms remember the lock state for later launches; iOS stores it in a separate `rotation.cfg` in its preference directory |
 | Exit app (Android, iOS) | Tap `EXIT` in the unused area around the game |
 | On-screen keyboard (Android, iOS) | Tap `KEYBOARD` to show or hide the IME or iOS software keyboard |
 
@@ -64,8 +64,10 @@ may cover part of the game while open. The four controls are:
   to **UNLOCK** and the closed-padlock icon becomes an open padlock; tapping it
   resumes following the device sensors. This is an in-app lock and does not
   change the system rotation setting. The lock state and the exact pinned
-  orientation are saved, so the next launch restores the same configuration;
-  an unlocked launch follows the sensors again.
+  orientation are saved in the activity's `SharedPreferences`, separate from
+  the game save, so the next launch restores the same configuration
+  (re-applied once the activity is visible on Android 12 and newer); an
+  unlocked launch follows the sensors again.
 - **L CLICK** selects left-click mode for touch input. It is active at startup
   and its mouse icon fills the selected top button while outlining the other
   one. Tapping it changes the label to **R CLICK**, fills the right mouse
@@ -110,8 +112,15 @@ which stays hidden at launch; tapping anywhere outside it in the game window
 dismisses it. The lock control pins the exact current display
 orientation by narrowing SDL's supported orientation set, including blocking a
 180-degree turn, and **UNLOCK** restores all of the orientations declared in
-`Info.plist`. A physical gamepad and keyboard use the same SDL paths as the
-desktop build where iOS provides them.
+`Info.plist`. The lock state is remembered: if the app is locked, the next
+launch starts locked and shows **UNLOCK**. Because UIKit chooses the launch
+orientation from the device before the game runs, the launch pins the live
+orientation again rather than forcing a rotation; holding the device as it was
+locked therefore restores the same orientation. The lock is stored in its own
+`rotation.cfg` in the preference directory, separate from the game save, so
+starting a new game or resetting high scores never changes it. A physical
+gamepad and keyboard use the same SDL paths as the desktop build where iOS
+provides them.
 
 ## Gamepad
 

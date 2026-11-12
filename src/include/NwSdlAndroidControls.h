@@ -11,7 +11,10 @@
  * The current set is Exit, Keyboard, rotation Lock/Unlock, and a single
  * Left/Right click-mode toggle.  The selected click mode determines how touch
  * input inside the game viewport is delivered; left click is selected at
- * startup.
+ * startup.  The rotation-lock choice is remembered across launches: Android
+ * keeps it in its activity preferences, and iOS keeps it in a separate
+ * rotation.cfg file in the writable preference directory (not in the game
+ * save).
  */
 
 #ifndef NW_SDL_ANDROID_CONTROLS_H

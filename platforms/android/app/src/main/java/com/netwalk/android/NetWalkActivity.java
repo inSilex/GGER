@@ -83,6 +83,13 @@ public class NetWalkActivity extends SDLActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        /* Android 12+ ignores setRequestedOrientation() from an activity that
+         * is not visible, so the request made in onCreate() can be dropped.
+         * Re-assert the persisted choice now that the activity is resumed;
+         * clearing the cache makes applyRotationPreference() issue the call
+         * again instead of assuming the launch request took effect. */
+        requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;
+        applyRotationPreference();
         enterFullscreen();
     }
 

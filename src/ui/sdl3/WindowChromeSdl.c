@@ -26,6 +26,7 @@
 #include <stdlib.h>
 
 #include <SDL3/SDL_init.h>
+#include <SDL3/SDL_filesystem.h>
 #include <SDL3/SDL_video.h>
 #include <SDL3/SDL_surface.h>
 #include <SDL3/SDL_pixels.h>
@@ -392,8 +393,12 @@ static int g_nwSdlAndroidCardOpen NW_SDL_BSS;
 static int g_nwSdlAndroidCardAnimFrom NW_SDL_BSS;
 static Uint64 g_nwSdlAndroidCardAnimStart NW_SDL_BSS;
 static Uint64 g_nwSdlAndroidCardDeadline NW_SDL_BSS;
-#if defined(__ANDROID__)
 static int g_nwSdlAndroidRotationLockedSynced NW_SDL_BSS;
+#if defined(NW_PORTABLE_IOS)
+/* The orientation that was pinned when the player last chose LOCK.  It is
+ * persisted beside the game data, not inside it: the lock is a per-device UI
+ * preference, so it must survive launches without being part of a save. */
+static char g_nwSdlIosRotationMask[32] NW_SDL_BSS;
 #endif
 
 /* The controls are drawn in the letterbox bars whenever the bars are large
@@ -1130,6 +1135,139 @@ NW_SDL_CODE static void nw_android_sync_rotation_locked(void)
 }
 #endif
 
+#if defined(NW_PORTABLE_IOS)
+/* Persisted rotation lock, in its own file in the writable preference
+ * directory.  Keeping it out of the game's save data means a new game slot or
+ * a reset of high scores never changes how the device is held. */
+#define NW_IOS_ROTATION_FILE "rotation.cfg"
+
+NW_SDL_CODE static FILE *nw_ios_rotation_open(const char *pszMode)
+{
+    char *pszPref;
+    char szPath[1024];
+    FILE *pFile;
+
+    pszPref = SDL_GetPrefPath("Gamos", "NetWalk");
+    if (pszPref == NULL)
+        return NULL;
+    if (snprintf(szPath, sizeof(szPath), "%s%s", pszPref,
+                 NW_IOS_ROTATION_FILE) <= 0) {
+        SDL_free(pszPref);
+        return NULL;
+    }
+    pFile = fopen(szPath, pszMode);
+    SDL_free(pszPref);
+    return pFile;
+}
+
+/* Returns 1 when the stored state says the lock is on.  The pinned
+ * orientation name is copied into pszMask for diagnostics and for detecting a
+ * launch in a different orientation. */
+NW_SDL_CODE static int nw_ios_load_rotation_locked(char *pszMask,
+                                                   size_t maskSize)
+{
+    char szLine[160];
+    int locked = 0;
+    FILE *pFile;
+
+    if (maskSize > 0)
+        pszMask[0] = '\0';
+    pFile = nw_ios_rotation_open("r");
+    if (pFile == NULL)
+        return 0;
+    while (fgets(szLine, sizeof(szLine), pFile) != NULL) {
+        char *pKey = szLine;
+        char *pValue = strchr(szLine, '=');
+        size_t len;
+
+        if (pValue == NULL)
+            continue;
+        *pValue++ = '\0';
+        len = strlen(pValue);
+        while (len > 0 &&
+               (pValue[len - 1] == '\n' || pValue[len - 1] == '\r' ||
+                pValue[len - 1] == ' ' || pValue[len - 1] == '\t'))
+            pValue[--len] = '\0';
+        if (strcmp(pKey, "locked") == 0) {
+            locked = atoi(pValue) != 0;
+        } else if (strcmp(pKey, "orientation") == 0 && maskSize > 0) {
+            strncpy(pszMask, pValue, maskSize - 1);
+            pszMask[maskSize - 1] = '\0';
+        }
+    }
+    fclose(pFile);
+    return locked;
+}
+
+NW_SDL_CODE static void nw_ios_save_rotation_locked(int locked,
+                                                   const char *pszMask)
+{
+    FILE *pFile;
+
+    pFile = nw_ios_rotation_open("w");
+    if (pFile == NULL)
+        return;
+    fprintf(pFile,
+            "# NetWalk rotation lock; kept separate from the game save\n"
+            "locked=%d\n"
+            "orientation=%s\n",
+            locked ? 1 : 0,
+            (locked && pszMask != NULL) ? pszMask : "");
+    fclose(pFile);
+}
+
+/* SDL's orientation names for the current display.  The landscape names are
+ * reversed relative to UIKit (see the openradar note in SDL_uikitmodes.m). */
+NW_SDL_CODE static const char *nw_ios_current_orientation_mask(void)
+{
+    if (g_nwSdlWindow == NULL)
+        return NULL;
+    switch (SDL_GetCurrentDisplayOrientation(
+                SDL_GetDisplayForWindow(g_nwSdlWindow))) {
+    case SDL_ORIENTATION_LANDSCAPE:
+        return "LandscapeRight";
+    case SDL_ORIENTATION_LANDSCAPE_FLIPPED:
+        return "LandscapeLeft";
+    case SDL_ORIENTATION_PORTRAIT:
+        return "Portrait";
+    case SDL_ORIENTATION_PORTRAIT_FLIPPED:
+        return "PortraitUpsideDown";
+    default:
+        return NULL;
+    }
+}
+
+/* Apply the stored lock once, after the window exists.  UIKit has already
+ * chosen the launch orientation, so pinning the live orientation here picks
+ * the same one and avoids the window-frame mismatch that an orientation hint
+ * set before window creation caused.  When the device is still held the way it
+ * was locked, the live orientation matches the stored one. */
+NW_SDL_CODE static void nw_ios_sync_rotation_locked(void)
+{
+    char szSavedMask[32];
+    const char *pszCurrent;
+
+    if (g_nwSdlAndroidRotationLockedSynced || g_nwSdlWindow == NULL)
+        return;
+    if (!nw_ios_load_rotation_locked(szSavedMask, sizeof(szSavedMask))) {
+        g_nwSdlAndroidRotationLockedSynced = 1;
+        return;
+    }
+    pszCurrent = nw_ios_current_orientation_mask();
+    if (pszCurrent == NULL)
+        return;
+    (void)SDL_SetHint(SDL_HINT_ORIENTATIONS, pszCurrent);
+    strncpy(g_nwSdlIosRotationMask, pszCurrent,
+            sizeof(g_nwSdlIosRotationMask) - 1);
+    g_nwSdlIosRotationMask[sizeof(g_nwSdlIosRotationMask) - 1] = '\0';
+    g_nwSdlAndroidRotationLocked = 1;
+    g_nwSdlAndroidRotationLockedSynced = 1;
+    /* Keep the file truthful when the app launched in another orientation. */
+    if (strcmp(szSavedMask, pszCurrent) != 0)
+        nw_ios_save_rotation_locked(1, pszCurrent);
+}
+#endif
+
 NW_SDL_CODE int NwSdlAndroidToggleRotationLock(void)
 {
 #if defined(__ANDROID__)
@@ -1155,39 +1293,33 @@ NW_SDL_CODE int NwSdlAndroidToggleRotationLock(void)
      * constants (see the openradar note in SDL_uikitmodes.m): the display
      * orientation SDL calls LANDSCAPE is UIInterfaceOrientationLandscapeRight.
      * Using SDL's own naming here without that reversal would pin the device
-     * to the opposite landscape and let a 180-degree turn through. */
+     * to the opposite landscape and let a 180-degree turn through.
+     *
+     * Both choices are written to the separate rotation file so the next
+     * launch starts with the same lock state. */
     const char *mask;
 
     if (g_nwSdlWindow == NULL)
         return g_nwSdlAndroidRotationLocked;
+    nw_ios_sync_rotation_locked();
     if (g_nwSdlAndroidRotationLocked) {
         (void)SDL_SetHint(SDL_HINT_ORIENTATIONS,
                           "Portrait PortraitUpsideDown "
                           "LandscapeLeft LandscapeRight");
         g_nwSdlAndroidRotationLocked = 0;
+        g_nwSdlIosRotationMask[0] = '\0';
+        nw_ios_save_rotation_locked(0, NULL);
         return 0;
     }
-    switch (SDL_GetCurrentDisplayOrientation(
-                SDL_GetDisplayForWindow(g_nwSdlWindow))) {
-    case SDL_ORIENTATION_LANDSCAPE:
-        mask = "LandscapeRight";
-        break;
-    case SDL_ORIENTATION_LANDSCAPE_FLIPPED:
-        mask = "LandscapeLeft";
-        break;
-    case SDL_ORIENTATION_PORTRAIT:
-        mask = "Portrait";
-        break;
-    case SDL_ORIENTATION_PORTRAIT_FLIPPED:
-        mask = "PortraitUpsideDown";
-        break;
-    default:
-        mask = NULL;
-        break;
-    }
+    mask = nw_ios_current_orientation_mask();
     if (mask != NULL) {
         (void)SDL_SetHint(SDL_HINT_ORIENTATIONS, mask);
+        strncpy(g_nwSdlIosRotationMask, mask,
+                sizeof(g_nwSdlIosRotationMask) - 1);
+        g_nwSdlIosRotationMask[sizeof(g_nwSdlIosRotationMask) - 1] = '\0';
         g_nwSdlAndroidRotationLocked = 1;
+        g_nwSdlAndroidRotationLockedSynced = 1;
+        nw_ios_save_rotation_locked(1, mask);
     }
     return g_nwSdlAndroidRotationLocked;
 #else
@@ -1201,6 +1333,7 @@ NW_SDL_CODE int NwSdlAndroidRotationLocked(void)
     nw_android_sync_rotation_locked();
     return g_nwSdlAndroidRotationLocked;
 #elif defined(NW_PORTABLE_IOS)
+    nw_ios_sync_rotation_locked();
     return g_nwSdlAndroidRotationLocked;
 #else
     return 0;
@@ -1641,6 +1774,13 @@ NW_SDL_CODE void CreatePlayerMainWindow(void *pPlayerCfg)
         return;
     }
     NW_NATIVE_BOOT("window_created");
+
+#if defined(NW_PORTABLE_IOS)
+    /* Restore the remembered rotation lock as soon as the window exists.
+     * Waiting for the first drawn frame would leave a short rotatable window
+     * and could let the launch orientation change before the lock applies. */
+    nw_ios_sync_rotation_locked();
+#endif
 
 #if !defined(__ANDROID__)
     /* Use the same generated artwork as the Android launcher, Windows

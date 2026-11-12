@@ -398,7 +398,11 @@ Device runtime checks:
     padlock opens. `UNLOCK` restores all orientations from `Info.plist`.
     Rotation between portrait and either landscape direction still works
     while unlocked. While locked, rotating the device by 180 degrees must not
-    change the presentation.
+    change the presentation. Lock the app, force-quit it, and relaunch: the
+    control comes back as `UNLOCK` and the app stays locked. Unlock, relaunch
+    again, and confirm it follows the sensors. The choice lives in
+    `rotation.cfg` in the `Gamos/NetWalk` preference directory, not in
+    `NETWALK0.282`.
   - In portrait, the buttons sit in the bottom black bar as one wide row; in
     wide landscape they split into two columns in the side bars. The game view
     stays fully visible in both bar layouts. On a near-4:3 window the controls
